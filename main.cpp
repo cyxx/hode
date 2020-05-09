@@ -3,7 +3,9 @@
  * Copyright (C) 2009-2011 Gregory Montoir (cyx@users.sourceforge.net)
  */
 
+#if !defined(PSP) && !defined(WII)
 #include <SDL.h>
+#endif
 #include <getopt.h>
 #include <sys/stat.h>
 
@@ -36,6 +38,7 @@ static bool _widescreen = false;
 
 static const bool _runBenchmark = false;
 static bool _runMenu = true;
+static bool _displayLoadingScreen = true;
 
 static void lockAudio(int flag) {
 	if (flag) {
@@ -51,7 +54,6 @@ static void mixAudio(void *userdata, int16_t *buf, int len) {
 
 static void setupAudio(Game *g) {
 	g->_mix._lock = lockAudio;
-	g->_mix.init(g_system->getOutputSampleRate());
 	AudioCallback cb;
 	cb.proc = mixAudio;
 	cb.userdata = g;
@@ -100,7 +102,7 @@ static int handleConfigIni(void *userdata, const char *section, const char *name
 		} else if (strcmp(name, "frame_duration") == 0) {
 			g->_frameMs = atoi(value);
 		} else if (strcmp(name, "loading_screen") == 0) {
-			g->_loadingScreenEnabled = configBool(value);
+			_displayLoadingScreen = configBool(value);
 		}
 	} else if (strcmp(section, "display") == 0) {
 		if (strcmp(name, "scale_factor") == 0) {
@@ -129,61 +131,79 @@ int main(int argc, char *argv[]) {
 	g_debugMask = 0; //kDebug_GAME | kDebug_RESOURCE | kDebug_SOUND | kDebug_MONSTER;
 	int cheats = 0;
 
-	if (argc == 2) {
-		// data path as the only command line argument
+#ifdef WII
+	System_earlyInit();
+	static const char *pathsWII[] = {
+		"sd:/hode",
+		"usb:/hode",
+		0
+	};
+	for (int i = 0; pathsWII[i]; ++i) {
 		struct stat st;
-		if (stat(argv[1], &st) == 0 && S_ISDIR(st.st_mode)) {
-			dataPath = strdup(argv[1]);
+		if (stat(pathsWII[i], &st) == 0 && S_ISDIR(st.st_mode)) {
+			dataPath = strdup(pathsWII[i]);
+			savePath = strdup(pathsWII[i]);
+			break;
 		}
 	}
-	while (1) {
-		static struct option options[] = {
-			{ "datapath",   required_argument, 0, 1 },
-			{ "savepath",   required_argument, 0, 2 },
-			{ "level",      required_argument, 0, 3 },
-			{ "checkpoint", required_argument, 0, 4 },
-			{ "debug",      required_argument, 0, 5 },
-			{ "cheats",     required_argument, 0, 6 },
-			{ 0, 0, 0, 0 },
-		};
-		int index;
-		const int c = getopt_long(argc, argv, "", options, &index);
-		if (c == -1) {
-			break;
+#endif
+	if (System_hasCommandLine()) {
+		if (argc == 2) {
+			// data path as the only command line argument
+			struct stat st;
+			if (stat(argv[1], &st) == 0 && S_ISDIR(st.st_mode)) {
+				dataPath = strdup(argv[1]);
+			}
 		}
-		switch (c) {
-		case 1:
-			dataPath = strdup(optarg);
-			break;
-		case 2:
-			savePath = strdup(optarg);
-			break;
-		case 3:
-			if (optarg[0] >= '0' && optarg[0] <= '9') {
-				level = atoi(optarg);
-			} else {
-				for (int i = 0; _levelNames[i]; ++i) {
-					if (strcmp(_levelNames[i], optarg) == 0) {
-						level = i;
-						break;
+		while (1) {
+			static struct option options[] = {
+				{ "datapath",   required_argument, 0, 1 },
+				{ "savepath",   required_argument, 0, 2 },
+				{ "level",      required_argument, 0, 3 },
+				{ "checkpoint", required_argument, 0, 4 },
+				{ "debug",      required_argument, 0, 5 },
+				{ "cheats",     required_argument, 0, 6 },
+				{ 0, 0, 0, 0 },
+			};
+			int index;
+			const int c = getopt_long(argc, argv, "", options, &index);
+			if (c == -1) {
+				break;
+			}
+			switch (c) {
+			case 1:
+				dataPath = strdup(optarg);
+				break;
+			case 2:
+				savePath = strdup(optarg);
+				break;
+			case 3:
+				if (optarg[0] >= '0' && optarg[0] <= '9') {
+					level = atoi(optarg);
+				} else {
+					for (int i = 0; _levelNames[i]; ++i) {
+						if (strcmp(_levelNames[i], optarg) == 0) {
+							level = i;
+							break;
+						}
 					}
 				}
+				resume = false;
+				break;
+			case 4:
+				checkpoint = atoi(optarg);
+				resume = false;
+				break;
+			case 5:
+				g_debugMask |= atoi(optarg);
+				break;
+			case 6:
+				cheats |= atoi(optarg);
+				break;
+			default:
+				fprintf(stdout, "%s\n", _usage);
+				return -1;
 			}
-			resume = false;
-			break;
-		case 4:
-			checkpoint = atoi(optarg);
-			resume = false;
-			break;
-		case 5:
-			g_debugMask |= atoi(optarg);
-			break;
-		case 6:
-			cheats |= atoi(optarg);
-			break;
-		default:
-			fprintf(stdout, "%s\n", _usage);
-			return -1;
 		}
 	}
 	Game *g = new Game(dataPath ? dataPath : _defaultDataPath, savePath ? savePath : _defaultSavePath, cheats);
@@ -199,6 +219,9 @@ int main(int argc, char *argv[]) {
 	g->loadSetupCfg(resume);
 	bool runGame = true;
 	g->_video->init(isPsx);
+	if (_displayLoadingScreen) {
+		g->displayLoadingScreen();
+	}
 	if (_runMenu && resume && !isPsx) {
 		Menu *m = new Menu(g, g->_paf, g->_res, g->_video);
 		runGame = m->mainLoop();
@@ -207,10 +230,16 @@ int main(int argc, char *argv[]) {
 	if (runGame && !g_system->inp.quit) {
 		bool levelChanged = false;
 		do {
+			if (_displayLoadingScreen) {
+				g->displayLoadingScreen();
+			}
 			g->mainLoop(level, checkpoint, levelChanged);
 			// do not save progress when game is started from a specific level/checkpoint
 			if (resume) {
 				g->saveSetupCfg();
+			}
+			if (g->_res->_isDemo) {
+				break;
 			}
 			level = g->_currentLevel + 1;
 			checkpoint = 0;
@@ -218,7 +247,6 @@ int main(int argc, char *argv[]) {
 		} while (!g_system->inp.quit && level < kLvl_test);
 	}
 	g_system->stopAudio();
-	g->_mix.fini();
 	g_system->destroy();
 	delete g;
 	free(dataPath);

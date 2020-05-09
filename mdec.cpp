@@ -149,7 +149,7 @@ static void idct(float *dequantData, float *result) {
 			for (int i = 0; i < 8; ++i) {
 				p += u[i] * _idct8x8[y][i];
 			}
-                        result[y * 8 + x] = p;
+			result[y * 8 + x] = p;
 		}
 	}
 }
@@ -220,7 +220,7 @@ int decodeMDEC(const uint8_t *src, int len, const uint8_t *mborder, int mblen, i
 end:
 	if (!mborder && bs.bitsAvailable() >= 11) {
 		const int eof = bs.getBits(11);
-		assert(eof == 0x3FE); // v2 frame
+		assert(eof == 0x3FE || eof == 0x3FF);
 	}
 
 	return bs._src - src;

@@ -1,4 +1,6 @@
 
+// lar1_hod - "into the lair"
+
 #include "game.h"
 #include "level.h"
 #include "paf.h"
@@ -367,7 +369,7 @@ void Level_lar1::postScreenUpdate_lar1_screen14() {
 					_paf->unload(12);
 				}
 				_video->clearPalette();
-				_g->updateScreen(_andyObject->screenNum);
+				_g->setupScreen(_andyObject->screenNum);
 			}
 			break;
 		}
@@ -416,7 +418,7 @@ void Level_lar1::postScreenUpdate_lar1_screen19() {
 				}
 				_video->clearPalette();
 				++_screenCounterTable[19]; // bugfix: conditioned with _pafSkipCutscenes
-				_g->updateScreen(_andyObject->screenNum);
+				_g->setupScreen(_andyObject->screenNum);
 				Game::_lar1_maskData[12 * 6 + 1] = 0;
 				Game::_lar1_maskData[13 * 6 + 1] = 0;
 				_andyObject->xPos = 204;

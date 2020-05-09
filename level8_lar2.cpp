@@ -1,4 +1,6 @@
 
+// lar2_hod - "heart of darkness"
+
 #include "game.h"
 #include "level.h"
 #include "paf.h"
@@ -190,7 +192,7 @@ void Level_lar2::postScreenUpdate_lar2_screen4() {
 			_video->clearPalette();
 		}
 		_g->_currentLevelCheckpoint = _checkpoint; // bugfix: conditioned with _pafSkipCutscenes
-		_g->updateScreen(_andyObject->screenNum);
+		_g->setupScreen(_andyObject->screenNum);
 	}
 	LvlObject *o = _g->findLvlObject(2, 0, 4);
 	_g->updateGatesLar(o, _lar2_gatesData + 8, 2);
@@ -214,7 +216,7 @@ void Level_lar2::postScreenUpdate_lar2_screen6() {
 					_video->clearPalette();
 				}
 				_g->_currentLevelCheckpoint = _checkpoint; // bugfix: conditioned with _pafSkipCutscenes
-				_g->updateScreen(_andyObject->screenNum);
+				_g->setupScreen(_andyObject->screenNum);
 			}
 		} else if (_checkpoint == 3) {
 			if (_res->_screensState[6].s0 != 0) {
@@ -224,7 +226,7 @@ void Level_lar2::postScreenUpdate_lar2_screen6() {
 					_video->clearPalette();
 				}
 				_res->_screensState[6].s0 = 0; // bugfix: conditioned with _pafSkipCutscenes
-				_g->updateScreen(_andyObject->screenNum);
+				_g->setupScreen(_andyObject->screenNum);
 			}
 		}
 	}
@@ -239,7 +241,7 @@ void Level_lar2::postScreenUpdate_lar2_screen7() {
 				_video->clearPalette();
 			}
 			_res->_screensState[7].s0 = 1; // bugfix: conditioned with _pafSkipCutscenes
-			_g->updateScreen(_andyObject->screenNum);
+			_g->setupScreen(_andyObject->screenNum);
 		}
 	}
 }
@@ -306,7 +308,6 @@ void Level_lar2::postScreenUpdate_lar2_screen12() {
 					o->objectUpdateType = 7;
 				}
 			}
-
 		}
 	}
 }
