@@ -100,7 +100,7 @@ static int handleConfigIni(void *userdata, const char *section, const char *name
 		} else if (strcmp(name, "difficulty") == 0) {
 			g->_difficulty = atoi(value);
 		} else if (strcmp(name, "frame_duration") == 0) {
-			g->_frameMs = atoi(value);
+			g->_frameMs = g->_paf->_frameMs = atoi(value);
 		} else if (strcmp(name, "loading_screen") == 0) {
 			_displayLoadingScreen = configBool(value);
 		}
@@ -211,30 +211,35 @@ int main(int argc, char *argv[]) {
 	if (_runBenchmark) {
 		g->benchmarkCpu();
 	}
-	// load setup.dat and detects if these are PC or PSX datafiles
+	// load setup.dat (PC) or setup.dax (PSX)
 	g->_res->loadSetupDat();
 	const bool isPsx = g->_res->_isPsx;
 	g_system->init(_title, Video::W, Video::H, _fullscreen, _widescreen, isPsx);
 	setupAudio(g);
-	g->loadSetupCfg(resume);
-	bool runGame = true;
-	g->_video->init(isPsx);
+	if (isPsx) {
+		g->_video->initPsx();
+		_runMenu = false;
+	}
 	if (_displayLoadingScreen) {
 		g->displayLoadingScreen();
 	}
-	if (_runMenu && resume && !isPsx) {
-		Menu *m = new Menu(g, g->_paf, g->_res, g->_video);
-		runGame = m->mainLoop();
-		delete m;
-	}
-	if (runGame && !g_system->inp.quit) {
+	do {
+		g->loadSetupCfg(resume);
+		if (_runMenu && resume) {
+			Menu *m = new Menu(g, g->_paf, g->_res, g->_video);
+			const bool runGame = m->mainLoop();
+			delete m;
+			if (!runGame) {
+				break;
+			}
+		}
 		bool levelChanged = false;
-		do {
+		while (!g_system->inp.quit && level < kLvl_test) {
 			if (_displayLoadingScreen) {
 				g->displayLoadingScreen();
 			}
 			g->mainLoop(level, checkpoint, levelChanged);
-			// do not save progress when game is started from a specific level/checkpoint
+			// do not save progress when starting from a specific level checkpoint
 			if (resume) {
 				g->saveSetupCfg();
 			}
@@ -244,8 +249,8 @@ int main(int argc, char *argv[]) {
 			level = g->_currentLevel + 1;
 			checkpoint = 0;
 			levelChanged = true;
-		} while (!g_system->inp.quit && level < kLvl_test);
-	}
+		}
+	} while (!g_system->inp.quit && resume && !isPsx); // do not return to menu when starting from a specific level checkpoint
 	g_system->stopAudio();
 	g_system->destroy();
 	delete g;

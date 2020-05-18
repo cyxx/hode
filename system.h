@@ -46,7 +46,8 @@ struct System {
 	virtual void setScaler(const char *name, int multiplier) = 0;
 	virtual void setGamma(float gamma) = 0;
 
-	virtual void setPalette(const uint8_t *pal, int n, int depth = 8) = 0;
+	virtual void setPalette(const uint8_t *pal, int n, int depth) = 0;
+	virtual void clearPalette() = 0;
 	virtual void copyRect(int x, int y, int w, int h, const uint8_t *buf, int pitch) = 0;
 	virtual void copyYuv(int w, int h, const uint8_t *y, int ypitch, const uint8_t *u, int upitch, const uint8_t *v, int vpitch) = 0;
 	virtual void fillRect(int x, int y, int w, int h, uint8_t color) = 0;

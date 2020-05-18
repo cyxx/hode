@@ -62,23 +62,6 @@ enum {
 	kSoundNum_Reset = 5
 };
 
-static void setDefaultsSetupCfg(SetupConfig *config, int num) {
-	assert(num >= 0 && num < 4);
-	memset(config->players[num].progress, 0, 10);
-	config->players[num].levelNum = 0;
-	config->players[num].checkpointNum = 0;
-	config->players[num].cutscenesMask = 0;
-	memset(config->players[num].controls, 0, 32);
-	config->players[num].controls[0x0] = 0x11;
-	config->players[num].controls[0x4] = 0x22;
-	config->players[num].controls[0x8] = 0x84;
-	config->players[num].controls[0xC] = 0x48;
-	config->players[num].difficulty = 1;
-	config->players[num].stereo = 1;
-	config->players[num].volume = Game::kDefaultSoundVolume;
-	config->players[num].lastLevelNum = 0;
-}
-
 static bool isEmptySetupCfg(SetupConfig *config, int num) {
 	return config->players[num].levelNum == 0 && config->players[num].checkpointNum == 0 && config->players[num].cutscenesMask == 0;
 }
@@ -93,11 +76,6 @@ void Menu::setVolume() {
 	const int volume = _config->players[_config->currentPlayer].volume;
 	if (volume != _g->_snd_masterVolume) {
 		_g->_snd_masterVolume = volume;
-		if (volume == 0) {
-			_g->muteSound();
-		} else {
-			_g->unmuteSound();
-		}
 	}
 }
 
@@ -336,22 +314,28 @@ void Menu::loadData() {
 }
 
 int Menu::getSoundNum(int num, int index) const {
-	const int soundListsCount = READ_LE_UINT32(_soundData + 4);
-	if (num < soundListsCount) {
-		const int count = READ_LE_UINT32(_soundData + 8 + num * 8 + 4);
-		assert(index < count);
-		const uint8_t *data = _soundData + READ_LE_UINT32(_soundData + 8 + num * 8);
-		return (int16_t)READ_LE_UINT16(data + index * 2);
+	const uint8_t *data = _soundData;
+	int count = READ_LE_UINT32(data + 4);
+	if (num < count) {
+		data += 8 + num * 8;
+		count = READ_LE_UINT32(data + 4);
+		if (index < count) {
+			data = _soundData + READ_LE_UINT32(data);
+			return (int16_t)READ_LE_UINT16(data + index * 2);
+		} else {
+			warning("Invalid sound index %d count %d", index, count);
+		}
 	}
 	return -1;
 }
 
-void Menu::playSound(int num) {
+SssObject *Menu::playSound(int num) {
 	num = getSoundNum(num);
 	debug(kDebug_MENU, "playSound %d", num);
 	if (num != -1) {
-		_g->playSound(num, 0, 0, 5);
+		return _g->playSound(num, 0, 0, 5);
 	}
+	return 0;
 }
 
 void Menu::drawBitmap(const uint8_t *data, uint32_t size, bool setPalette) {
@@ -407,10 +391,7 @@ void Menu::drawSpriteAnim(DatSpritesGroup *spriteGroup, const uint8_t *ptr, uint
 	}
 }
 
-void Menu::refreshScreen(bool updatePalette) {
-	if (updatePalette) {
-		g_system->setPalette(_paletteBuffer, 256, 6);
-	}
+void Menu::refreshScreen() {
 	_video->updateGameDisplay(_video->_frontLayer);
 	g_system->updateScreen(false);
 }
@@ -441,27 +422,21 @@ bool Menu::mainLoop() {
 		if (option == kTitleScreen_AssignPlayer) {
 			handleAssignPlayer();
 			debug(kDebug_MENU, "currentPlayer %d", _config->currentPlayer);
+			continue;
 		} else if (option == kTitleScreen_Play) {
-			return true;
+			ret = true;
 		} else if (option == kTitleScreen_Options) {
 			PafCallback pafCb;
 			pafCb.proc = menuPafCallback;
 			pafCb.userdata = this;
 			_paf->setCallback(&pafCb);
 			playSound(kSound_0xA0);
-			handleOptions();
-			debug(kDebug_MENU, "optionNum %d", _optionNum);
+			ret = handleOptions();
 			_g->resetSound();
 			_paf->setCallback(0);
-			if (_optionNum == kMenu_NewGame + 1 || _optionNum == kMenu_CurrentGame + 1 || _optionNum == kMenu_ResumeGame) {
-				ret = true;
-				break;
-			} else if (_optionNum == kMenu_Quit + 1) {
-				break;
-			}
 		} else if (option == kTitleScreen_Quit) {
-			break;
 		}
+		break;
 	}
 	_res->unloadDatMenuBuffers();
 	return ret;
@@ -470,7 +445,7 @@ bool Menu::mainLoop() {
 void Menu::drawTitleScreen(int option) {
 	drawBitmap(_titleBitmapData, _titleBitmapSize, true);
 	drawSprite(_titleSprites, (const uint8_t *)&_titleSprites[1], option);
-	refreshScreen(false);
+	refreshScreen();
 }
 
 int Menu::handleTitleScreen() {
@@ -630,7 +605,7 @@ void Menu::drawPlayerProgress(int state, int cursor) {
 	if (state > 2) {
 		drawSprite(_playerSprites, (const uint8_t *)&_playerSprites[1], 2); // MessageBox
 	}
-	refreshScreen(false);
+	refreshScreen();
 }
 
 void Menu::handleAssignPlayer() {
@@ -659,15 +634,15 @@ void Menu::handleAssignPlayer() {
 				} else if (state == 1) { // select
 					--cursor;
 					_config->currentPlayer = cursor;
-					// setVolume();
+					setVolume();
 					cursor = 0;
 				} else if (state == 2) { // clear
 					state = 5; // 'No'
 				} else {
 					if (state == 4) { // 'Yes', clear confirmation
 						--cursor;
-						setDefaultsSetupCfg(_config, cursor);
-						// setVolume();
+						_res->setDefaultsSetupCfg(_config, cursor);
+						setVolume();
 					}
 					setCurrentPlayer(_config->currentPlayer);
 					state = 2;
@@ -739,7 +714,7 @@ void Menu::updateBitmapsCircularList(const DatBitmapsGroup *bitmapsGroup, const 
 }
 
 void Menu::drawBitmapsCircularList(const DatBitmapsGroup *bitmapsGroup, const uint8_t *bitmapData, int num, int count, bool updatePalette) {
-	memcpy(_paletteBuffer, _optionsBitmapData[_optionNum] + _optionsBitmapSize[_optionNum], 768);
+	memcpy(_paletteBuffer, _optionsBitmapData[_optionNum] + _optionsBitmapSize[_optionNum], 256 * 3);
 	if (updatePalette) {
 		g_system->setPalette(_paletteBuffer, 256, 6);
 	}
@@ -766,7 +741,7 @@ void Menu::drawCheckpointScreen() {
 		drawSpriteAnim(_iconsSprites, _iconsSpritesData, (num != 0) ? 8 : 7);
 	}
 	drawSpriteAnim(_iconsSprites, _iconsSpritesData, 6);
-	refreshScreen(false);
+	refreshScreen();
 }
 
 void Menu::drawLevelScreen() {
@@ -776,7 +751,7 @@ void Menu::drawLevelScreen() {
 	drawBitmap(bitmap, _levelsBitmapsData + bitmap->offset, 23, 10, bitmap->w, bitmap->h, 192);
 	drawSpriteAnim(_iconsSprites, _iconsSpritesData, 4);
 	drawSpriteAnim(_iconsSprites, _iconsSpritesData, (_loadLevelButtonState != 0) ? 3 : 2);
-	refreshScreen(false);
+	refreshScreen();
 }
 
 void Menu::drawCutsceneScreen() {
@@ -792,7 +767,7 @@ void Menu::drawCutsceneScreen() {
 		drawSpriteAnim(_iconsSprites, _iconsSpritesData, (num != 0) ? 13 : 12);
 	}
 	drawSpriteAnim(_iconsSprites, _iconsSpritesData, 11);
-	refreshScreen(false);
+	refreshScreen();
 }
 
 void Menu::drawSettingsScreen() {
@@ -802,7 +777,7 @@ void Menu::drawSettingsScreen() {
 	drawSpriteAnim(_iconsSprites, _iconsSpritesData, (_settingNum == kSettingNum_Difficulty) ? 0x26 : 0x23);
 	drawSpriteAnim(_iconsSprites, _iconsSpritesData, (_settingNum == kSettingNum_Sound) ? 0x28 : 0x25);
 	drawSprite(&_iconsSprites[0x29], _iconsSpritesData, (_settingNum == kSettingNum_Confirm) ? 1 : 0);
-	refreshScreen(true);
+	refreshScreen();
 }
 
 void Menu::handleSettingsScreen(int num) {
@@ -824,7 +799,7 @@ void Menu::handleSettingsScreen(int num) {
 		}
 		return;
 	} else if (num == kCursor_Left) {
-		if (_settingNum != kSettingNum_Confirm && _settingNum > 0 && 0) { // 'controls' not implemented
+		if (_settingNum != kSettingNum_Confirm && _settingNum > 1) { // 'controls' not implemented
 			playSound(kSound_0x70);
 			--_settingNum;
 			_iconsSprites[0x27].num = 0;
@@ -832,7 +807,7 @@ void Menu::handleSettingsScreen(int num) {
 			_iconsSprites[0x28].num = 0;
 		}
 	} else if (num == kCursor_Right) {
-		if (_settingNum != kSettingNum_Confirm && _settingNum < 2 && 0) { // 'volume' not implemented
+		if (_settingNum != kSettingNum_Confirm && _settingNum < 2) {
 			playSound(kSound_0x70);
 			++_settingNum;
 			_iconsSprites[0x27].num = 0;
@@ -861,7 +836,7 @@ void Menu::drawControlsScreen() {
 	drawSpriteAnim(_iconsSprites, _iconsSpritesData, (_controlsNum == 1) ? 0x2E : 0x2D);
 	drawSpriteAnim(_iconsSprites, _iconsSpritesData, (_controlsNum == 0) ? 0x2C : 0x2B);
 	drawSprite(&_iconsSprites[0x2F], _iconsSpritesData, (_controlsNum == 2) ? 1 : 0);
-	refreshScreen(true);
+	refreshScreen();
 }
 
 void Menu::handleControlsScreen(int num) {
@@ -906,31 +881,172 @@ void Menu::handleControlsScreen(int num) {
 	g_system->sleep(kDelayMs);
 }
 
+void Menu::drawJoystickKeyCode(int num) {
+	const uint32_t code = READ_LE_UINT32(_config->players[_config->currentPlayer].controls + 4 * num);
+	if (code != 0) {
+		static const uint8_t xPos[] = { 20, 79, 138, 197 };
+		int bit = 0;
+		for (; bit < 32; ++bit) {
+			if ((code & (1 << bit)) != 0) {
+				break;
+			}
+		}
+		const int code1 = (bit < 8) ? (41 + bit) : 40;
+		_video->drawStringCharacter(xPos[num], 111, code1, _res->_fontDefaultColor, _video->_frontLayer);
+		if ((code & ~(1 << bit)) != 0) {
+			for (; bit < 32; ++bit) {
+				if ((code & (1 << bit)) != 0) {
+					break;
+				}
+			}
+			const int code2 = (bit < 8) ? (41 + bit) : 40;
+			_video->drawStringCharacter(xPos[num] + 23, 111, code2, _res->_fontDefaultColor, _video->_frontLayer);
+		}
+	}
+}
+
 void Menu::drawJoystickControlsScreen() {
 	drawBitmap(_optionsBitmapData[_optionNum], _optionsBitmapSize[_optionNum]);
-	drawSprite(&_iconsSprites[0x10], _iconsSpritesData, (_joystickControlsNum == 1) ? 2 : 3);
+	drawSprite(&_iconsSprites[0x11], _iconsSpritesData, (_joystickControlsNum == 1) ? 2 : 3);
 	drawSprite(&_iconsSprites[0x11], _iconsSpritesData, 0);
-	drawSprite(&_iconsSprites[0x10], _iconsSpritesData, (_joystickControlsNum == 0) ? 0 : 1);
-	drawSprite(&_iconsSprites[0x10], _iconsSpritesData, (_joystickControlsNum == 2) ? 4 : 5);
-	drawSprite(&_iconsSprites[0x10], _iconsSpritesData, (_joystickControlsNum == 3) ? 6 : 7);
+	drawSprite(&_iconsSprites[0x11], _iconsSpritesData, (_joystickControlsNum == 0) ? 0 : 1);
+	drawSprite(&_iconsSprites[0x11], _iconsSpritesData, (_joystickControlsNum == 2) ? 4 : 5);
+	drawSprite(&_iconsSprites[0x11], _iconsSpritesData, (_joystickControlsNum == 3) ? 6 : 7);
 	if (_joystickControlsNum <= 3) {
-		drawSprite(&_iconsSprites[0x10], _iconsSpritesData, _joystickControlsNum * 2);
+		drawSprite(&_iconsSprites[0x11], _iconsSpritesData, _joystickControlsNum * 2);
 		drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x15);
 		drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x14);
+		drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x13);
+		drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x16);
 	} else if (_joystickControlsNum == 4) {
 		drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x19);
 		drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x14);
+		drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x13);
+		drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x16);
 	} else if (_joystickControlsNum == 5) {
 		drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x15);
 		drawSprite(&_iconsSprites[0x18], _iconsSpritesData, 0);
+		drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x13);
+		drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x16);
+	} else if (_joystickControlsNum == 6) {
+		drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x15);
+		drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x14);
+		drawSprite(&_iconsSprites[0x17], _iconsSpritesData, 0);
+		drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x16);
+	} else if (_joystickControlsNum == 7) {
+		drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x15);
+		drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x14);
+		drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x13);
+		drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x1A);
+	} else if (_joystickControlsNum == 8) {
+		drawSprite(&_iconsSprites[0x11], _iconsSpritesData, 4);
+		static const int joystickKeyCode = 0;
+		int mask = 0;
+		if (READ_LE_UINT32(_config->players[_config->currentPlayer].controls + 0x0) & joystickKeyCode) {
+			mask = 1;
+		}
+		if (READ_LE_UINT32(_config->players[_config->currentPlayer].controls + 0x4) & joystickKeyCode) {
+			mask |= 2;
+		}
+		if (READ_LE_UINT32(_config->players[_config->currentPlayer].controls + 0x8) & joystickKeyCode) {
+			mask |= 4;
+		}
+		if (READ_LE_UINT32(_config->players[_config->currentPlayer].controls + 0xC) & joystickKeyCode) {
+			mask |= 5;
+		}
+		const int flag = (((mask & 5) - 5) != 0) ? 0 : 1;
+		if (((mask & 1) != 0 && flag == 0) || _iconsSprites[0x19].num != 0) {
+			drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x19);
+		} else {
+			drawSprite(&_iconsSprites[0x19], _iconsSpritesData, 0);
+		}
+		if ((mask & 2) == 0 || _iconsSprites[0x18].num == 0) {
+			drawSprite(&_iconsSprites[0x18], _iconsSpritesData, 0);
+		} else {
+			drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x18);
+		}
+		if (((mask & 4) != 0 && flag == 0) || _iconsSprites[0x17].num != 0) {
+			drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x17);
+		} else {
+			drawSprite(&_iconsSprites[0x17], _iconsSpritesData, 0);
+		}
+		if (flag == 0 || _iconsSprites[0x1A].num == 0) {
+			drawSprite(&_iconsSprites[0x1A], _iconsSpritesData, 0);
+		} else {
+			drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x1A);
+		}
 	}
-	refreshScreen(true);
+	drawJoystickKeyCode(0);
+	drawJoystickKeyCode(1);
+	drawJoystickKeyCode(2);
+	drawJoystickKeyCode(3);
+	refreshScreen();
 }
 
 void Menu::handleJoystickControlsScreen(int num) {
 	const uint8_t *data = &_optionData[num * 8];
 	num = data[5];
-	if (num == 4) {
+	if (num == 1) {
+		if (_joystickControlsNum == 0) {
+			playSound(kSound_0x70);
+			_joystickControlsNum = 1;
+		} else if (_joystickControlsNum == 2) {
+			playSound(kSound_0x70);
+			_joystickControlsNum = 0;
+		} else if (_joystickControlsNum == 5) {
+			playSound(kSound_0x70);
+			_joystickControlsNum = 4;
+		} else if (_joystickControlsNum == 6) {
+			playSound(kSound_0x70);
+			_joystickControlsNum = 5;
+		} else if (_joystickControlsNum == 7) {
+			playSound(kSound_0x70);
+			_joystickControlsNum = 6;
+		} else if (_joystickControlsNum == 8) {
+			_iconsSprites[0x19].num = 0;
+			_iconsSprites[0x18].num = 0;
+			_iconsSprites[0x17].num = 0;
+			_iconsSprites[0x1A].num = 0;
+			_joystickControlsNum = 2;
+		}
+	} else if (num == 2) {
+		if (_joystickControlsNum == 0) {
+			playSound(kSound_0x70);
+			_joystickControlsNum = 2;
+		} else if (_joystickControlsNum == 1) {
+			playSound(kSound_0x70);
+			_joystickControlsNum = 0;
+		} else if (_joystickControlsNum == 4) {
+			playSound(kSound_0x70);
+			_joystickControlsNum = 5;
+		} else if (_joystickControlsNum == 5) {
+			playSound(kSound_0x70);
+			_joystickControlsNum = 6;
+		} else if (_joystickControlsNum == 6) {
+			playSound(kSound_0x70);
+			_joystickControlsNum = 7;
+		} else if (_joystickControlsNum == 8) {
+			_iconsSprites[0x19].num = 0;
+			_iconsSprites[0x18].num = 0;
+			_iconsSprites[0x17].num = 0;
+			_iconsSprites[0x1A].num = 0;
+			_joystickControlsNum = 2;
+		}
+	} else if (num == 3) {
+		if (_joystickControlsNum <= 2) {
+			playSound(kSound_0x70);
+			_joystickControlsNum = 5;
+		} else if (_joystickControlsNum == 3) {
+			playSound(kSound_0x70);
+			_joystickControlsNum = 0;
+		} else if (_joystickControlsNum == 8) {
+			_iconsSprites[0x19].num = 0;
+			_iconsSprites[0x18].num = 0;
+			_iconsSprites[0x17].num = 0;
+			_iconsSprites[0x1A].num = 0;
+			_joystickControlsNum = 2;
+		}
+	} else if (num == 4) {
 		if (_joystickControlsNum != 3) {
 			playSound(kSound_0x70);
 		}
@@ -947,7 +1063,167 @@ void Menu::handleJoystickControlsScreen(int num) {
 	g_system->sleep(kDelayMs);
 }
 
+void Menu::drawKeyboardKeyCode(int num) {
+	for (int i = 0; i < 2; ++i) {
+		const uint8_t code = _config->players[_config->currentPlayer].controls[16 + 2 * num + i];
+		if (code != 0) {
+			static const uint8_t xPos[] = { 20, 79, 138, 197 };
+			const int chr = _video->findStringCharacterFontIndex(code);
+			if (chr != 255) {
+				_video->drawStringCharacter(xPos[num] + i * 23, 111, chr, _res->_fontDefaultColor, _video->_frontLayer);
+			}
+		}
+	}
+}
+
+void Menu::drawKeyboardControlsScreen() {
+	drawBitmap(_optionsBitmapData[_optionNum], _optionsBitmapSize[_optionNum]);
+	for (int i = 1; i <= 7; ++i) {
+		drawSprite(&_iconsSprites[0x10], _iconsSpritesData, i);
+	}
+	if (_keyboardControlsNum < 3) {
+		drawSprite(&_iconsSprites[0x10], _iconsSpritesData, _keyboardControlsNum * 2);
+		drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x1D);
+		drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x1C);
+		drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x1B);
+		drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x1E);
+	} else if (_keyboardControlsNum == 4) {
+		drawSprite(&_iconsSprites[0x21], _iconsSpritesData, 0);
+		drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x1C);
+		drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x1B);
+		drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x1E);
+	} else if (_keyboardControlsNum == 5) {
+		drawSprite(&_iconsSprites[0x20], _iconsSpritesData, 0);
+		drawSprite(&_iconsSprites[0x1D], _iconsSpritesData, 0);
+		drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x1B);
+		drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x1E);
+	} else if (_keyboardControlsNum == 6) {
+		drawSprite(&_iconsSprites[0x1F], _iconsSpritesData, 0);
+		drawSprite(&_iconsSprites[0x1D], _iconsSpritesData, 0);
+		drawSprite(&_iconsSprites[0x1C], _iconsSpritesData, 0);
+		drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x1E);
+	} else if (_keyboardControlsNum == 7) {
+		drawSprite(&_iconsSprites[0x22], _iconsSpritesData, 0);
+		drawSprite(&_iconsSprites[0x1D], _iconsSpritesData, 0);
+		drawSprite(&_iconsSprites[0x1C], _iconsSpritesData, 0);
+		drawSprite(&_iconsSprites[0x1B], _iconsSpritesData, 0);
+	} else if (_keyboardControlsNum == 8) {
+		drawSprite(&_iconsSprites[0x10], _iconsSpritesData, 4);
+		static const int keyboardMask = 0;
+		int mask = keyboardMask;
+		const int flag = (((keyboardMask & 5) - 5) != 0) ? 0 : 1;
+		if (((mask & 1) != 0 && flag == 0) || _iconsSprites[0x21].num != 0) {
+			drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x21);
+		} else {
+			drawSprite(&_iconsSprites[0x21], _iconsSpritesData, 0);
+		}
+		if ((mask & 2) == 0 || _iconsSprites[0x20].num == 0) {
+			drawSprite(&_iconsSprites[0x20], _iconsSpritesData, 0);
+		} else {
+			drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x20);
+		}
+		if (((mask & 4) != 0 && flag == 0) || _iconsSprites[0x1F].num != 0) {
+			drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x1F);
+		} else {
+			drawSprite(&_iconsSprites[0x1F], _iconsSpritesData, 0);
+		}
+		if (flag == 0 || _iconsSprites[0x22].num == 0) {
+			drawSprite(&_iconsSprites[0x22], _iconsSpritesData, 0);
+		} else {
+			drawSpriteAnim(_iconsSprites, _iconsSpritesData, 0x22);
+		}
+	}
+	drawKeyboardKeyCode(0);
+	drawKeyboardKeyCode(1);
+	drawKeyboardKeyCode(2);
+	drawKeyboardKeyCode(3);
+	refreshScreen();
+}
+
 void Menu::handleKeyboardControlsScreen(int num) {
+	const uint8_t *data = &_optionData[num * 8];
+	num = data[5];
+	if (num == 1) {
+		if (_keyboardControlsNum == 0) {
+			playSound(kSound_0x70);
+			_keyboardControlsNum = 1;
+		} else if (_keyboardControlsNum == 2) {
+			playSound(kSound_0x70);
+			_keyboardControlsNum = 0;
+		} else if (_keyboardControlsNum == 5) {
+			playSound(kSound_0x70);
+			_keyboardControlsNum = 4;
+		} else if (_keyboardControlsNum == 6) {
+			playSound(kSound_0x70);
+			_keyboardControlsNum = 5;
+		} else if (_keyboardControlsNum == 7) {
+			playSound(kSound_0x70);
+			_keyboardControlsNum = 6;
+		} else if (_keyboardControlsNum == 8) {
+			_iconsSprites[0x21].num = 0;
+			_iconsSprites[0x20].num = 0;
+			_iconsSprites[0x1F].num = 0;
+			_iconsSprites[0x22].num = 0;
+			_keyboardControlsNum = 2;
+		}
+	} else if (num == 2) {
+		if (_keyboardControlsNum == 0) {
+			playSound(kSound_0x70);
+			_keyboardControlsNum = 2;
+		} else if (_keyboardControlsNum == 1) {
+			playSound(kSound_0x70);
+			_keyboardControlsNum = 0;
+		} else if (_keyboardControlsNum == 4) {
+			playSound(kSound_0x70);
+			_keyboardControlsNum = 5;
+		} else if (_keyboardControlsNum == 5) {
+			playSound(kSound_0x70);
+			_keyboardControlsNum = 6;
+		} else if (_keyboardControlsNum == 6) {
+			playSound(kSound_0x70);
+			_keyboardControlsNum = 7;
+		} else if (_keyboardControlsNum == 8) {
+			_iconsSprites[0x21].num = 0;
+			_iconsSprites[0x20].num = 0;
+			_iconsSprites[0x1F].num = 0;
+			_iconsSprites[0x22].num = 0;
+			_keyboardControlsNum = 2;
+		}
+	} else if (num == 3) {
+		if (_keyboardControlsNum <= 2) {
+			playSound(kSound_0x70);
+			_keyboardControlsNum = 5;
+		} else if (_keyboardControlsNum == 3) {
+			playSound(kSound_0x70);
+			_keyboardControlsNum = 0;
+		} else if (_keyboardControlsNum == 8) {
+			_iconsSprites[0x21].num = 0;
+			_iconsSprites[0x20].num = 0;
+			_iconsSprites[0x1F].num = 0;
+			_iconsSprites[0x22].num = 0;
+			_keyboardControlsNum = 2;
+		}
+	} else if (num == 4) {
+		if (_keyboardControlsNum == 3) {
+			playSound(kSound_0x70);
+		}
+		if (_keyboardControlsNum <= 2) {
+			_keyboardControlsNum = 3;
+		} else if (_keyboardControlsNum > 3 && _keyboardControlsNum <= 7) {
+			_keyboardControlsNum = 0;
+		} else if (_keyboardControlsNum == 8) {
+			_iconsSprites[0x21].num = 0;
+			_iconsSprites[0x20].num = 0;
+			_iconsSprites[0x1F].num = 0;
+			_iconsSprites[0x22].num = 0;
+			_keyboardControlsNum = 2;
+		}
+	}
+	drawKeyboardControlsScreen();
+	if (_keyboardControlsNum == 8) {
+		_condMask = 8;
+	}
+	g_system->sleep(kDelayMs);
 }
 
 void Menu::drawDifficultyScreen() {
@@ -958,7 +1234,7 @@ void Menu::drawDifficultyScreen() {
 		}
 	}
 	drawSprite(&_iconsSprites[0xF], _iconsSpritesData, _difficultyNum * 2 + 1);
-	refreshScreen(true);
+	refreshScreen();
 }
 
 void Menu::handleDifficultyScreen(int num) {
@@ -1021,7 +1297,7 @@ void Menu::drawSoundScreen() {
 		drawSprite(&_iconsSprites[0x12], _iconsSpritesData, 17);
 		drawSprite(&_iconsSprites[0x12], _iconsSpritesData, 19);
 	}
-	refreshScreen(true);
+	refreshScreen();
 }
 
 void Menu::handleSoundScreen(int num) {
@@ -1035,31 +1311,31 @@ void Menu::handleSoundScreen(int num) {
 			_config->players[_config->currentPlayer].volume = _g->_snd_masterVolume;
 			_condMask = 0x80;
 		} else if (_soundNum == kSoundNum_Test) {
-			playSound(kSound_0x60);
-			SssObject *so = 0;
+			SssObject *so = playSound(kSound_0x60);
 			int spriteNum = _soundTestSpriteNum = 7;
 			drawSoundScreen();
 			if (so) {
-				while (_g->isSoundPlaying(so->flags0)) {
-					if (so->pcmFramesCount <= 20) {
+				int frames, panning = so->panning;
+				while ((frames = _g->getSoundPosition(so)) > 0) {
+					if (frames <= 20) {
 						if (_soundTestSpriteNum != 7) {
 							_soundTestSpriteNum = 7;
-							so->panning = 64; // center
+							panning = 64; // center
 						}
-					} else if (so->pcmFramesCount <= 36) {
+					} else if (frames <= 36) {
 						if (_soundTestSpriteNum != 23) {
 							_soundTestSpriteNum = 23;
-							so->panning = 128; // right
+							panning = 128; // right
 						}
-					} else if (so->pcmFramesCount <= 49) {
+					} else { // if (frames <= 49)
 						if (_soundTestSpriteNum != 22) {
 							_soundTestSpriteNum = 22;
-							so->panning = 0; // left
+							panning = 0; // left
 						}
 					}
 					if (spriteNum != _soundTestSpriteNum) {
 						spriteNum = _soundTestSpriteNum;
-						_g->setSoundObjectPanning(so);
+						_g->setSoundPanning(so, panning);
 						drawSoundScreen();
 					}
 					g_system->sleep(kDelayMs);
@@ -1154,8 +1430,7 @@ void Menu::changeToOption(int num) {
 		_config->players[_config->currentPlayer].levelNum = 0;
 		_config->players[_config->currentPlayer].checkpointNum = 0;
 	} else if (_optionNum == kMenu_CurrentGame + 1) {
-		// _config->players[_config->currentPlayer].levelNum = _g->_currentLevel;
-		// _config->players[_config->currentPlayer].checkpointNum = _g->_currentLevelCheckpoint;
+		// nothing to do
 	} else if (_optionNum == kMenu_Load + 1) {
 		_loadLevelButtonState = 0;
 		memcpy(_paletteBuffer, _optionsBitmapData[5] + _optionsBitmapSize[5], 192 * 3);
@@ -1166,12 +1441,13 @@ void Menu::changeToOption(int num) {
 		_loadCheckpointButtonState = 0;
 		_checkpointNum = 0;
 		setLevelCheckpoint(_config->currentPlayer);
-		memcpy(_paletteBuffer, _optionsBitmapData[6] + _optionsBitmapSize[6], 768);
+		memcpy(_paletteBuffer, _optionsBitmapData[6] + _optionsBitmapSize[6], 256 * 3);
 		g_system->setPalette(_paletteBuffer, 256, 6);
 		drawCheckpointScreen();
 	} else if (_optionNum == kMenu_Settings + 1) {
 		_settingNum = kSettingNum_Difficulty;
 		memcpy(_paletteBuffer, _optionsBitmapData[_optionNum] + _optionsBitmapSize[_optionNum], 256 * 3);
+		g_system->setPalette(_paletteBuffer, 256, 6);
 		handleSettingsScreen(5);
 	} else if (_optionNum == kMenu_Cutscenes + 1) {
 		_loadCutsceneButtonState = 0;
@@ -1180,7 +1456,8 @@ void Menu::changeToOption(int num) {
 	} else if (_optionsBitmapSize[_optionNum] != 0) {
 		drawBitmap(_optionsBitmapData[_optionNum], _optionsBitmapSize[_optionNum]);
 		memcpy(_paletteBuffer, _optionsBitmapData[_optionNum] + _optionsBitmapSize[_optionNum], 256 * 3);
-		refreshScreen(true);
+		g_system->setPalette(_paletteBuffer, 256, 6);
+		refreshScreen();
 	}
 }
 
@@ -1371,7 +1648,7 @@ static bool matchInput(uint8_t type, uint8_t mask, const PlayerInput &inp, uint8
 	return false;
 }
 
-void Menu::handleOptions() {
+bool Menu::handleOptions() {
 	_lastLevelNum = _config->players[_config->currentPlayer].lastLevelNum + 1;
 	if (_lastLevelNum > _res->_datHdr.levelsCount) {
 		_lastLevelNum = _res->_datHdr.levelsCount;
@@ -1429,7 +1706,8 @@ void Menu::handleOptions() {
 				_iconsSprites[0x27].num = 0;
 				_iconsSprites[0x26].num = 0;
 				_iconsSprites[0x28].num = 0;
-				memcpy(_paletteBuffer, _optionsBitmapData[_optionNum] + _optionsBitmapSize[_optionNum], 768);
+				memcpy(_paletteBuffer, _optionsBitmapData[_optionNum] + _optionsBitmapSize[_optionNum], 256 * 3);
+				g_system->setPalette(_paletteBuffer, 256, 6);
 				_settingNum = kSettingNum_Difficulty;
 			}
 			handleSettingsScreen(num);
@@ -1438,7 +1716,8 @@ void Menu::handleOptions() {
 			if (prevOptionNum != _optionNum) {
 				_iconsSprites[0x2C].num = 0;
 				_iconsSprites[0x2E].num = 0;
-				memcpy(_paletteBuffer, _optionsBitmapData[_optionNum] + _optionsBitmapSize[_optionNum], 768);
+				memcpy(_paletteBuffer, _optionsBitmapData[_optionNum] + _optionsBitmapSize[_optionNum], 256 * 3);
+				g_system->setPalette(_paletteBuffer, 256, 6);
 				_controlsNum = 2;
 			}
 			handleControlsScreen(num);
@@ -1449,7 +1728,8 @@ void Menu::handleOptions() {
 				_iconsSprites[0x18].num = 0;
 				_iconsSprites[0x17].num = 0;
 				_iconsSprites[0x1A].num = 0;
-				memcpy(_paletteBuffer, _optionsBitmapData[_optionNum] + _optionsBitmapSize[_optionNum], 768);
+				memcpy(_paletteBuffer, _optionsBitmapData[_optionNum] + _optionsBitmapSize[_optionNum], 256 * 3);
+				g_system->setPalette(_paletteBuffer, 256, 6);
 				_joystickControlsNum = 1;
 			}
 			handleJoystickControlsScreen(num);
@@ -1460,21 +1740,24 @@ void Menu::handleOptions() {
 				_iconsSprites[0x20].num = 0;
 				_iconsSprites[0x1F].num = 0;
 				_iconsSprites[0x22].num = 0;
-				memcpy(_paletteBuffer, _optionsBitmapData[_optionNum] + _optionsBitmapSize[_optionNum], 768);
+				memcpy(_paletteBuffer, _optionsBitmapData[_optionNum] + _optionsBitmapSize[_optionNum], 256 * 3);
+				g_system->setPalette(_paletteBuffer, 256, 6);
 				_keyboardControlsNum = 1;
 			}
 			handleKeyboardControlsScreen(num);
 			break;
 		case 4:
 			if (prevOptionNum != _optionNum) {
-				memcpy(_paletteBuffer, _optionsBitmapData[_optionNum] + _optionsBitmapSize[_optionNum], 768);
+				memcpy(_paletteBuffer, _optionsBitmapData[_optionNum] + _optionsBitmapSize[_optionNum], 256 * 3);
+				g_system->setPalette(_paletteBuffer, 256, 6);
 				_difficultyNum = _config->players[_config->currentPlayer].difficulty;
 			}
 			handleDifficultyScreen(num);
 			break;
 		case 5:
 			if (prevOptionNum != _optionNum) {
-				memcpy(_paletteBuffer, _optionsBitmapData[_optionNum] + _optionsBitmapSize[_optionNum], 768);
+				memcpy(_paletteBuffer, _optionsBitmapData[_optionNum] + _optionsBitmapSize[_optionNum], 256 * 3);
+				g_system->setPalette(_paletteBuffer, 256, 6);
 				_soundVolume = _g->_snd_masterVolume;
 				_soundNum = kSoundNum_Confirm;
 				_soundCounter = 0;
@@ -1508,9 +1791,11 @@ void Menu::handleOptions() {
 			warning("Unhandled option %d %d", _optionNum, data[4]);
 			break;
 		}
-		if (_optionNum == kMenu_Quit + 1 || _optionNum == kMenu_NewGame + 1 || _optionNum == kMenu_CurrentGame + 1 || _optionNum == kMenu_ResumeGame) {
-			// 'setup.cfg' is saved when exiting the main loop
+		if (_optionNum == kMenu_Quit + 1) {
 			break;
+		} else if (_optionNum == kMenu_NewGame + 1 || _optionNum == kMenu_CurrentGame + 1 || _optionNum == kMenu_ResumeGame) {
+			return true;
 		}
 	}
+	return false;
 }

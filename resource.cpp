@@ -142,6 +142,7 @@ Resource::Resource(FileSystem *fs)
 
 	_loadingImageBuffer = 0;
 	_fontBuffer = 0;
+	_fontDefaultColor = 0;
 	_menuBuffer0 = 0;
 	_menuBuffer1 = 0;
 
@@ -234,6 +235,12 @@ void Resource::loadSetupDat() {
 			} else {
 				memcpy(_fontBuffer, _loadingImageBuffer + offset, kFontSize);
 			}
+			for (int i = 0; i < kFontSize; ++i) {
+				_fontDefaultColor = _fontBuffer[i];
+				if (_fontDefaultColor != 0) {
+					break;
+				}
+			}
 		}
 	}
 	assert(_datHdr.yesNoQuitImage == hintsCount - 3);
@@ -259,7 +266,8 @@ bool Resource::loadDatHintImage(int num, uint8_t *dst, uint8_t *pal) {
 }
 
 bool Resource::loadDatLoadingImage(uint8_t *dst, uint8_t *pal) {
-	if (!_isPsx && _loadingImageBuffer) {
+	assert(!_isPsx);
+	if (_loadingImageBuffer) {
 		const uint32_t bufferSize = READ_LE_UINT32(_loadingImageBuffer);
 		const int size = decodeLZW(_loadingImageBuffer + 8, dst);
 		assert(size == 256 * 192);
@@ -929,7 +937,6 @@ void Resource::loadSssData(File *fp, const uint32_t baseOffset) {
 		}
 		// _sssPreloadInfosData = data;
 	}
-	// data += _sssHdr.preloadInfoCount * 8;
 	_sssPreloadInfosData.allocate(_sssHdr.preloadInfoCount);
 	for (int i = 0; i < _sssHdr.preloadInfoCount; ++i) {
 		_sssPreloadInfosData[i].count = fp->readUint32();
@@ -2070,4 +2077,21 @@ bool Resource::readSetupCfg(SetupConfig *config) {
 		return true;
 	}
 	return false;
+}
+
+void Resource::setDefaultsSetupCfg(SetupConfig *config, int num) {
+	assert(num >= 0 && num < 4);
+	memset(config->players[num].progress, 0, 10);
+	config->players[num].levelNum = 0;
+	config->players[num].checkpointNum = 0;
+	config->players[num].cutscenesMask = 0;
+	memset(config->players[num].controls, 0, 32);
+	config->players[num].controls[0x0] = 0x11;
+	config->players[num].controls[0x4] = 0x22;
+	config->players[num].controls[0x8] = 0x84;
+	config->players[num].controls[0xC] = 0x48;
+	config->players[num].difficulty = 1;
+	config->players[num].stereo = 1;
+	config->players[num].volume = 128;
+	config->players[num].lastLevelNum = 0;
 }

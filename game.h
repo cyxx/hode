@@ -61,9 +61,7 @@ struct Game {
 		kMaxBoundingBoxes = 64,
 
 		kDefaultSoundPanning = 64,
-		kDefaultSoundVolume = 128,
-
-		kFrameTimeStamp = 50 // original is 80ms (12.5hz)
+		kDefaultSoundVolume = 128
 	};
 
 	static const uint8_t _specialPowersDxDyTable[];
@@ -254,7 +252,7 @@ struct Game {
 	void loadTransformLayerData(const uint8_t *data);
 	void unloadTransformLayerData();
 	void decodeShadowScreenMask(LvlBackgroundData *lvl);
-	void playSound(int num, LvlObject *ptr, int a, int b);
+	SssObject *playSound(int num, LvlObject *ptr, int a, int b);
 	void removeSound(LvlObject *ptr);
 	void setupBackgroundBitmap();
 	void addToSpriteList(Sprite *spr);
@@ -520,7 +518,8 @@ struct Game {
 	void muteSound();
 	void unmuteSound();
 	void resetSound();
-	bool isSoundPlaying(uint32_t flags);
+	int getSoundPosition(const SssObject *so);
+	void setSoundPanning(SssObject *so, int panning);
 	SssObject *findLowestRankSoundObject() const;
 	void removeSoundObjectFromList(SssObject *so);
 	void updateSoundObject(SssObject *so);

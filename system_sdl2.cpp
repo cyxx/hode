@@ -62,6 +62,7 @@ struct System_SDL2 : System {
 	virtual void setScaler(const char *name, int multiplier);
 	virtual void setGamma(float gamma);
 	virtual void setPalette(const uint8_t *pal, int n, int depth);
+	virtual void clearPalette();
 	virtual void copyRect(int x, int y, int w, int h, const uint8_t *buf, int pitch);
 	virtual void copyYuv(int w, int h, const uint8_t *y, int ypitch, const uint8_t *u, int upitch, const uint8_t *v, int vpitch);
 	virtual void fillRect(int x, int y, int w, int h, uint8_t color);
@@ -340,6 +341,10 @@ void System_SDL2::setPalette(const uint8_t *pal, int n, int depth) {
 	if (_backgroundTexture) {
 		_pal[0] = 0;
 	}
+}
+
+void System_SDL2::clearPalette() {
+	memset(_pal, 0, sizeof(_pal));
 }
 
 void System_SDL2::copyRect(int x, int y, int w, int h, const uint8_t *buf, int pitch) {

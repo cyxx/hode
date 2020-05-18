@@ -100,14 +100,15 @@ void Game::resetSound() {
 	clearSoundObjects();
 }
 
-bool Game::isSoundPlaying(uint32_t flags) {
+int Game::getSoundPosition(const SssObject *so) {
 	MixerLock ml(&_mix);
-	for (SssObject *so = _sssObjectsList1; so; so = so->nextPtr) {
-		if (compareSssGroup(so->flags0, flags)) {
-			return true;
-		}
-	}
-	return false;
+	return so->pcm ? so->pcmFramesCount : -1;
+}
+
+void Game::setSoundPanning(SssObject *so, int panning) {
+	MixerLock ml(&_mix);
+	so->panning = panning;
+	setSoundObjectPanning(so);
 }
 
 SssObject *Game::findLowestRankSoundObject() const {
@@ -696,14 +697,14 @@ void Game::prependSoundObjectToList(SssObject *so) {
 		_sssObjectsList2 = so;
 	} else {
 		debug(kDebug_SOUND, "Adding so %p to list1 flags 0x%x", so, so->flags);
-		SssObject *stopSo = so; // vf
+		SssObject *stopSo = so;
 		if (so->pcm && so->pcm->ptr) {
 			if (kLimitSounds && _playingSssObjectsCount >= _playingSssObjectsMax) {
 				if (so->currentPriority > _lowRankSssObject->currentPriority) {
 
 					stopSo = _lowRankSssObject;
-					SssObject *next = _lowRankSssObject->nextPtr; // vd
-					SssObject *prev = _lowRankSssObject->prevPtr; // vc
+					SssObject *next = _lowRankSssObject->nextPtr;
+					SssObject *prev = _lowRankSssObject->prevPtr;
 
 					so->nextPtr = next;
 					so->prevPtr = prev;
@@ -714,7 +715,7 @@ void Game::prependSoundObjectToList(SssObject *so) {
 					if (prev) {
 						prev->nextPtr = so;
 					} else {
-						assert(so == _sssObjectsList1);
+						assert(stopSo == _sssObjectsList1);
 						_sssObjectsList1 = so;
 					}
 					_lowRankSssObject = findLowestRankSoundObject();
@@ -960,7 +961,9 @@ SssObject *Game::playSoundObject(SssInfo *s, int source, int mask) {
 			SssObject *so = &_sssObjectsTable[i];
 			if (so->pcm != 0 && so->filter == filter) {
 				so->currentPriority = CLIP(va + so->priority, 0, 7);
-				setLowPrioritySoundObject(so);
+				if (kLimitSounds) {
+					setLowPrioritySoundObject(so);
+				}
 			}
 		}
 	}
@@ -1021,9 +1024,7 @@ void Game::clearSoundObjects() {
 
 void Game::setLowPrioritySoundObject(SssObject *so) {
 	if ((so->flags & kFlagPaused) == 0) {
-		if (kLimitSounds) {
-			_lowRankSssObject = findLowestRankSoundObject();
-		}
+		_lowRankSssObject = findLowestRankSoundObject();
 	}
 }
 
@@ -1062,8 +1063,12 @@ void Game::setSoundObjectPanning(SssObject *so) {
 				volume = 0;
 				panning = kDefaultSoundPanning;
 				priority = 0;
-			} else {
-				panning = CLIP(so->panning, 0, 128);
+			} else if (so->panning < 0) {
+				panning = 0;
+				volume >>= 2;
+				priority /= 2;
+			} else if (so->panning > 128) {
+				panning = 128;
 				volume >>= 2;
 				priority /= 2;
 			}
@@ -1079,10 +1084,11 @@ void Game::setSoundObjectPanning(SssObject *so) {
 		if (so->pcm == 0) {
 			return;
 		}
-		if (volume < 0 || volume >= (int)ARRAYSIZE(_volumeRampTable)) {
+		if ((uint32_t)volume >= ARRAYSIZE(_volumeRampTable)) {
 			warning("Out of bounds volume %d (filter %d volume %d)", volume, (so->filter->volumeCurrent >> 16), so->volume);
 			so->panL = 0;
 			so->panR = 0;
+			so->panType = 0;
 			return;
 		}
 		int vd = _volumeRampTable[volume]; // 0..128
@@ -1204,7 +1210,7 @@ void Game::queueSoundObjectsPcmStride() {
 			if (so->currentPcmPtr >= end) {
 				continue;
 			}
-			if (so->panL == 0 && so->panR == 0) {
+			if ((so->panL == 0 && so->panR == 0) || so->panType == 0) {
 				continue;
 			}
 			_mix.queue(so->currentPcmPtr, end, so->panType, so->panL, so->panR, so->stereo);

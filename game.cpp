@@ -27,7 +27,7 @@ Game::Game(const char *dataPath, const char *savePath, uint32_t cheats)
 	_cheats = cheats;
 	_playDemo = false;
 
-	_frameMs = kFrameTimeStamp;
+	_frameMs = kFrameDuration;
 	_difficulty = 1; // normal
 
 	memset(_screenLvlObjectsList, 0, sizeof(_screenLvlObjectsList));
@@ -187,11 +187,11 @@ static BoundingBox _screenTransformRects[] = {
 };
 
 void Game::transformShadowLayer(int delta) {
-	const uint8_t *src = _video->_transformShadowBuffer + _video->_transformShadowLayerDelta; // vg
-	uint8_t *dst = _video->_shadowLayer; // va
+	const uint8_t *src = _video->_transformShadowBuffer + _video->_transformShadowLayerDelta;
+	uint8_t *dst = _video->_shadowLayer;
 	_video->_transformShadowLayerDelta += delta; // overflow/wrap at 255
 	for (int y = 0; y < Video::H; ++y) {
-		if (0) {
+		if (0) { // original clips the screen width to 250px
 			for (int x = 0; x < Video::W - 6; ++x) {
 				const int offset = x + *src++;
 				*dst++ = _video->_frontLayer[y * Video::W + offset];
@@ -282,14 +282,16 @@ void Game::decodeShadowScreenMask(LvlBackgroundData *lvl) {
 }
 
 // a: type/source (0, 1, 2) b: num/index (3, monster1Index, monster2.monster1Index)
-void Game::playSound(int num, LvlObject *ptr, int a, int b) {
+SssObject *Game::playSound(int num, LvlObject *ptr, int a, int b) {
 	MixerLock ml(&_mix);
+	SssObject *so = 0;
 	if (num < _res->_sssHdr.infosDataCount) {
 		debug(kDebug_GAME, "playSound num %d/%d a=%d b=%d", num, _res->_sssHdr.infosDataCount, a, b);
 		_currentSoundLvlObject = ptr;
-		playSoundObject(&_res->_sssInfosData[num], a, b);
+		so = playSoundObject(&_res->_sssInfosData[num], a, b);
 		_currentSoundLvlObject = 0;
 	}
+	return so;
 }
 
 void Game::removeSound(LvlObject *ptr) {
@@ -1360,7 +1362,7 @@ void Game::resetDisplay() {
 	_levelRestartCounter = 0;
 	_fadePalette = false;
 	memset(_video->_fadePaletteBuffer, 0, sizeof(_video->_fadePaletteBuffer));
-	_snd_masterVolume = kDefaultSoundVolume; // _plyConfigTable[_plyConfigNumber].soundVolume;
+	_snd_masterVolume = _setupConfig.players[_setupConfig.currentPlayer].volume;
 }
 
 void Game::setupScreen(uint8_t num) {
@@ -1407,7 +1409,6 @@ void Game::setupScreen(uint8_t num) {
 	setupBackgroundBitmap();
 	setupScreenMask(num);
 	resetDisplay();
-//	_time_counter1 = GetTickCount();
 }
 
 void Game::resetScreen() {
@@ -1549,7 +1550,7 @@ void Game::setAndyAnimationForArea(BoundingBox *box, int dx) {
 			uint8_t _al = 0;
 			if (_currentLevel != kLvl_rock) {
 				if (_bl == 1) {
-					if (((_andyObject->flags0 >> 5) & 7) == 3) {
+					if (((_andyObject->flags0 >> 5) & 7) != 3) {
 						_al = 0x80;
 					}
 				}
@@ -2090,8 +2091,10 @@ void Game::mainLoop(int level, int checkpoint, bool levelChanged) {
 		if (checkpoint != 0 && checkpoint >= _res->_datHdr.levelCheckpointsCount[level]) {
 			checkpoint = _setupConfig.players[num].progress[level];
 		}
-		_paf->_playedMask = _setupConfig.players[num].cutscenesMask;
 		debug(kDebug_GAME, "Restart at level %d checkpoint %d cutscenes 0x%x", level, checkpoint, _paf->_playedMask);
+		_paf->_playedMask = _setupConfig.players[num].cutscenesMask;
+		_snd_masterVolume = _setupConfig.players[num].volume;
+		_paf->setVolume(_snd_masterVolume);
 		_difficulty = _setupConfig.players[num].difficulty;
 		// resume once, on the starting level
 		_resumeGame = false;
@@ -2145,15 +2148,15 @@ void Game::mainLoop(int level, int checkpoint, bool levelChanged) {
 	resetShootLvlObjectDataTable();
 	callLevel_initialize();
 	restartLevel();
-	do {
+	while (true) {
 		const int frameTimeStamp = g_system->getTimeStamp() + _frameMs;
 		levelMainLoop();
-		if (g_system->inp.quit) {
+		if (g_system->inp.quit || _endLevel) {
 			break;
 		}
 		const int delay = MAX<int>(10, frameTimeStamp - g_system->getTimeStamp());
 		g_system->sleep(delay);
-	} while (!_endLevel);
+	}
 	_animBackgroundDataCount = 0;
 	callLevel_terminate();
 }
@@ -2705,10 +2708,12 @@ void Game::levelMainLoop() {
 			callLevel_postScreenUpdate(_currentRightScreen);
 		}
 	}
+	if (_endLevel) {
+		return;
+	}
 	_currentLevelCheckpoint = _level->_checkpoint;
-	if (updateAndyLvlObject() != 0) {
+	if (updateAndyLvlObject()) {
 		callLevel_tick();
-//		_time_counter1 -= _time_counter2;
 		return;
 	}
 	executeMstCode();
@@ -2974,7 +2979,7 @@ void Game::lvlObjectType1Init(LvlObject *ptr) {
 	o->anim = 13;
 	o->frame = 0;
 	o->screenNum = ptr->screenNum;
-	o->flags1 = merge_bits(o->flags1, ptr->flags1, 0x30); // vg->flags1 ^= (vg->flags1 ^ ptr->flags1) & 0x30;
+	o->flags1 = merge_bits(o->flags1, ptr->flags1, 0x30);
 	o->flags2 = ptr->flags2 & ~0x2000;
 	setupLvlObjectBitmap(o);
 	prependLvlObjectToList(&_plasmaExplosionObject, o);
@@ -2987,7 +2992,7 @@ void Game::lvlObjectType1Init(LvlObject *ptr) {
 	o->anim = 5;
 	o->frame = 0;
 	o->screenNum = ptr->screenNum;
-	o->flags1 = merge_bits(o->flags1, ptr->flags1, 0x30); // vg->flags1 ^= (vg->flags1 ^ ptr->flags1) & 0x30;
+	o->flags1 = merge_bits(o->flags1, ptr->flags1, 0x30);
 	o->flags2 = ptr->flags2 & ~0x2000;
 	setupLvlObjectBitmap(o);
 	prependLvlObjectToList(&_plasmaExplosionObject, o);
@@ -3623,7 +3628,7 @@ int Game::lvlObjectType8Callback(LvlObject *ptr) {
 			return 0;
 		}
 		int vb, var4;
-		MonsterObject1 *m = 0; // ve
+		MonsterObject1 *m = 0;
 		if (dataPtr >= &_monsterObjects1Table[0] && dataPtr < &_monsterObjects1Table[kMaxMonsterObjects1]) {
 			m = (MonsterObject1 *)ptr->dataPtr;
 			vb = 1;
@@ -3648,13 +3653,13 @@ int Game::lvlObjectType8Callback(LvlObject *ptr) {
 				vb = 0;
 				var4 = 4;
 			}
-			m = 0; // ve = 0
+			m = 0;
 			if (mo->flags24 & 8) {
 				ptr->bitmapBits = 0;
 				return 0;
 			}
 		}
-		LvlObject *o = 0; // vf
+		LvlObject *o = 0;
 		updateAndyObject(ptr);
 		if (m && m->o20) {
 			o = m->o20;
@@ -3669,9 +3674,9 @@ int Game::lvlObjectType8Callback(LvlObject *ptr) {
 		if (ptr->screenNum == _currentScreen || ptr->screenNum == _currentLeftScreen || ptr->screenNum == _currentRightScreen || o || (_currentLevel == kLvl_lar2 && ptr->spriteNum == 27) || (_currentLevel == kLvl_isld && ptr->spriteNum == 26)) {
 			if (ptr->currentSound != 0xFFFF) {
 				playSound(ptr->currentSound, ptr, vb, var4);
-			}
-			if (o && o->currentSound != 0xFFFF) {
-				playSound(o->currentSound, o, vb, var4);
+				if (o && o->currentSound != 0xFFFF) {
+					playSound(o->currentSound, o, vb, var4);
+				}
 			}
 		}
 	}
@@ -3811,13 +3816,13 @@ uint8_t Game::lvlObjectCallbackCollideScreen(LvlObject *o) {
 	uint8_t screenNum = o->screenNum;
 	uint8_t var30 = 0;
 
-	int yPos = o->yPos; // va
+	int yPos = o->yPos;
 	if ((o->flags0 & 0xE0) != 0x20) {
 		yPos += o->posTable[6].y;
 	} else {
 		yPos += o->posTable[3].y;
 	}
-	int xPos = o->xPos + o->posTable[3].x; // vc
+	int xPos = o->xPos + o->posTable[3].x;
 
 	int var1C = 0;
 	int var20 = 0;
@@ -3878,7 +3883,7 @@ uint8_t Game::lvlObjectCallbackCollideScreen(LvlObject *o) {
 	int num;
 	int var2E = _bl;
 	int vd = _res->_screensBasePos[screenNum].v + yPos;
-	int vf = _res->_screensBasePos[screenNum].u + xPos; // vf
+	int vf = _res->_screensBasePos[screenNum].u + xPos;
 	vd = screenMaskOffset(vf, vd);
 	int var4 = screenGridOffset(xPos, yPos);
 	if (_cl >= 4) {
@@ -4352,7 +4357,8 @@ void Game::setLavaAndyAnimation(int yPos) {
 }
 
 void Game::updateGatesLar(LvlObject *o, uint8_t *p, int num) {
-	uint32_t mask = 1 << num; // ve
+	p += num * 4;
+	uint32_t mask = 1 << num;
 	uint8_t _cl = p[0] & 15;
 	if (_cl >= 3) {
 		if ((o->flags0 & 0x1F) == 0) {
@@ -4360,12 +4366,12 @@ void Game::updateGatesLar(LvlObject *o, uint8_t *p, int num) {
 				if (_cl == 3) {
 					p[0] = (p[0] & ~0xB) | 4;
 					p[3] = p[1];
-					o->directionKeyMask = 1;
+					o->directionKeyMask = 1; // up (open)
 					o->actionKeyMask = 0;
 				} else {
 					p[0] = (p[0] & ~0xC) | 3;
 					p[3] = p[2];
-					o->directionKeyMask = 4;
+					o->directionKeyMask = 4; // down (close)
 					o->actionKeyMask = 0;
 				}
 			} else {
@@ -4375,7 +4381,6 @@ void Game::updateGatesLar(LvlObject *o, uint8_t *p, int num) {
 			}
 		}
 	} else {
-		num = p[1];
 		if ((p[1] | p[2]) != 0) {
 			uint8_t _dl = p[0] >> 4;
 			if (_cl != _dl) {
@@ -4389,10 +4394,10 @@ void Game::updateGatesLar(LvlObject *o, uint8_t *p, int num) {
 			}
 			if (p[3] == 0) {
 				if (p[0] & 0xF) {
-					o->directionKeyMask = 1;
+					o->directionKeyMask = 1; // up (open)
 					_mstAndyVarMask &= ~mask;
 				} else {
-					o->directionKeyMask = 4;
+					o->directionKeyMask = 4; // down (close)
 					_mstAndyVarMask |= mask;
 				}
 				_mstLevelGatesMask |= mask;
@@ -4410,10 +4415,10 @@ void Game::updateGatesLar(LvlObject *o, uint8_t *p, int num) {
 					uint8_t _al = (p[0] & 0xF0) | _dl;
 					p[0] = _al;
 					if (_al & 0xF0) {
-						o->directionKeyMask = 1;
+						o->directionKeyMask = 1; // up (open)
 						_mstAndyVarMask &= ~mask;
 					} else {
-						o->directionKeyMask = 4;
+						o->directionKeyMask = 4; // down (close)
 						_mstAndyVarMask |= mask;
 					}
 					_mstLevelGatesMask |= mask;
@@ -4426,9 +4431,9 @@ void Game::updateGatesLar(LvlObject *o, uint8_t *p, int num) {
 			}
 		}
 	}
-	int y1 = o->yPos + o->posTable[1].y; // ve
-	int h1 = o->posTable[1].y - o->posTable[2].y - 7; // vc
-	int x1 = o->xPos + o->posTable[1].x; // vd
+	int y1 = o->yPos + o->posTable[1].y;
+	int h1 = o->posTable[1].y - o->posTable[2].y - 7;
+	int x1 = o->xPos + o->posTable[1].x;
 	if (x1 < 0) {
 		x1 = 0;
 	}
@@ -4453,9 +4458,9 @@ void Game::updateGatesLar(LvlObject *o, uint8_t *p, int num) {
 			updateAndyObject(o);
 		}
 	}
-	int y2 = o->yPos + o->posTable[1].y; // vb
-	int h2 = o->posTable[2].y - o->posTable[1].y + 7; // vc
-	int x2 = o->xPos + o->posTable[1].x; // vd
+	int y2 = o->yPos + o->posTable[1].y;
+	int h2 = o->posTable[2].y - o->posTable[1].y + 7;
+	int x2 = o->xPos + o->posTable[1].x;
 	if (x2 < 0) {
 		x2 = 0;
 	}
@@ -4599,11 +4604,11 @@ int Game::updateSwitchesLar_checkAndy(int num, uint8_t *p, BoundingBox *b1, Boun
 		}
 		return ret;
 	}
-	if ((p[1] & 0xC) == 0 && (p[1] & 0x80) != 0) {
+	uint8_t _al = p[1];
+	if ((_al & 0xC) == 0 && (_al & 0x80) != 0) {
+		const uint8_t _cl = (_al >> 5) & 1;
+		_al = ((~_al) >> 1) & 1;
 		p = &gatesData[p[3] * 4];
-		const uint8_t _cl = (p[1] >> 5) & 1;
-		uint8_t _al = ((~p[1]) >> 1) & 1;
-
 		uint8_t _bl = p[0] >> 4;
 		if (_bl != _al) {
 			_bl = (_al << 4) | (p[0] & 0xF);
@@ -4800,6 +4805,7 @@ bool Game::loadSetupCfg(bool resume) {
 		return true;
 	}
 	memset(&_setupConfig, 0, sizeof(_setupConfig));
+	_res->setDefaultsSetupCfg(&_setupConfig, 0);
 	return false;
 }
 
