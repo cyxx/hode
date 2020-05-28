@@ -10,8 +10,6 @@ enum {
 	kFlagNoCode  = 1 << 2  // no bytecode
 };
 
-static const bool kLimitSounds = false; // limit the number of active playing sounds
-
 // if x < 90, lut[x] ~= x / 2
 // if x > 90, lut[x] ~= 45 + (x - 90) * 2
 static const uint8_t _volumeRampTable[129] = {
@@ -26,28 +24,8 @@ static const uint8_t _volumeRampTable[129] = {
 	0x80
 };
 
-static uint32_t sssGroupValue(uint8_t source, uint8_t mask, SssInfo *s) {
-	uint32_t value = 0;
-	assert(source < 3); // 0,1,2
-
-	// bits 20..24
-	value = source;
-	// bits 24..32
-	value |= mask << 4;
-
-	// bits 16..20
-	value <<= 4;
-	value |= s->sampleIndex & 15;
-
-	// bits 12..16
-	value <<= 4;
-	value |= s->concurrencyMask;
-
-	// bits 0..12
-	value <<= 12;
-	value |= (s->sssBankIndex & 0xFFF);
-
-	return value;
+static uint32_t sssGroupValue(uint8_t source, uint8_t mask, const SssInfo *s) {
+	return (mask << 24) | (source << 20) | ((s->sampleIndex & 15) << 16) | (s->concurrencyMask << 12) | (s->sssBankIndex & 0xFFF);
 }
 
 static bool compareSssGroup(uint32_t flags_a, uint32_t flags_b) {
@@ -56,7 +34,7 @@ static bool compareSssGroup(uint32_t flags_a, uint32_t flags_b) {
 		// the original code possibly used a structure with bit fields that was optimized by the compiler as a uint32_t
 		if (((flags_a >> 20) & 15) == ((flags_b >> 20) & 15)) { // source : 0,1,2 (Andy, monster1, monster2)
 			if ((flags_a & 0xFFF) == (flags_b & 0xFFF)) { // bank index
-				return (flags_a >> 24) == (flags_b >> 24); // sample index bit 0..31, used as a mask lut[][] |= 1 << bit
+				return (flags_a >> 24) == (flags_b >> 24); // sample index, used as a mask lut[][] |= 1 << index
 			}
 		}
 		return false;
@@ -86,12 +64,14 @@ static uint32_t *getSssGroupPtr(Resource *res, int num, uint32_t flags) {
 void Game::muteSound() {
 	MixerLock ml(&_mix);
 	_snd_muted = true;
+	_snd_bufferOffset = _snd_bufferSize = 0;
 	_mix._mixingQueueSize = 0;
 }
 
 void Game::unmuteSound() {
 	MixerLock ml(&_mix);
 	_snd_muted = false;
+	_snd_bufferOffset = _snd_bufferSize = 0;
 	_mix._mixingQueueSize = 0;
 }
 
@@ -111,7 +91,7 @@ void Game::setSoundPanning(SssObject *so, int panning) {
 	setSoundObjectPanning(so);
 }
 
-SssObject *Game::findLowestRankSoundObject() const {
+SssObject *Game::findLowPrioritySoundObject() const {
 	SssObject *so = 0;
 	if (_playingSssObjectsCount >= _playingSssObjectsMax && _sssObjectsList1) {
 		so = _sssObjectsList1;
@@ -143,9 +123,9 @@ void Game::removeSoundObjectFromList(SssObject *so) {
 		}
 		--_playingSssObjectsCount;
 
-		if (kLimitSounds) {
-			if (_lowRankSssObject == so || (_playingSssObjectsCount < _playingSssObjectsMax && _lowRankSssObject)) {
-				_lowRankSssObject = findLowestRankSoundObject();
+		if (_playingSssObjectsMax > 0) {
+			if (_lowPrioritySssObject == so || (_playingSssObjectsCount < _playingSssObjectsMax && _lowPrioritySssObject)) {
+				_lowPrioritySssObject = findLowPrioritySoundObject();
 			}
 		}
 	} else {
@@ -322,9 +302,9 @@ void Game::sssOp17_pauseSound(SssObject *so) {
 			}
 			--_playingSssObjectsCount;
 
-			if (kLimitSounds) {
-				if (so == _lowRankSssObject || (_playingSssObjectsCount < _playingSssObjectsMax && _lowRankSssObject)) {
-					_lowRankSssObject = findLowestRankSoundObject();
+			if (_playingSssObjectsMax > 0) {
+				if (so == _lowPrioritySssObject || (_playingSssObjectsCount < _playingSssObjectsMax && _lowPrioritySssObject)) {
+					_lowPrioritySssObject = findLowPrioritySoundObject();
 				}
 			}
 		} else {
@@ -699,12 +679,13 @@ void Game::prependSoundObjectToList(SssObject *so) {
 		debug(kDebug_SOUND, "Adding so %p to list1 flags 0x%x", so, so->flags);
 		SssObject *stopSo = so;
 		if (so->pcm && so->pcm->ptr) {
-			if (kLimitSounds && _playingSssObjectsCount >= _playingSssObjectsMax) {
-				if (so->currentPriority > _lowRankSssObject->currentPriority) {
+			if (_playingSssObjectsMax > 0 && _playingSssObjectsCount >= _playingSssObjectsMax) {
+				if (so->currentPriority > _lowPrioritySssObject->currentPriority) {
 
-					stopSo = _lowRankSssObject;
-					SssObject *next = _lowRankSssObject->nextPtr;
-					SssObject *prev = _lowRankSssObject->prevPtr;
+					stopSo = _lowPrioritySssObject;
+					debug(kDebug_SOUND, "Removing so %p priority %d", stopSo, stopSo->priority);
+					SssObject *next = _lowPrioritySssObject->nextPtr;
+					SssObject *prev = _lowPrioritySssObject->prevPtr;
 
 					so->nextPtr = next;
 					so->prevPtr = prev;
@@ -718,7 +699,7 @@ void Game::prependSoundObjectToList(SssObject *so) {
 						assert(stopSo == _sssObjectsList1);
 						_sssObjectsList1 = so;
 					}
-					_lowRankSssObject = findLowestRankSoundObject();
+					_lowPrioritySssObject = findLowPrioritySoundObject();
 				}
 			} else {
 				stopSo = 0;
@@ -730,13 +711,13 @@ void Game::prependSoundObjectToList(SssObject *so) {
 					_sssObjectsList1->prevPtr = so;
 				}
 				_sssObjectsList1 = so;
-				if (kLimitSounds) {
+				if (_playingSssObjectsMax > 0) {
 					if (_playingSssObjectsCount < _playingSssObjectsMax) {
-						_lowRankSssObject = 0;
-					} else if (!_lowRankSssObject) {
-						_lowRankSssObject = findLowestRankSoundObject();
-					} else if (so->currentPriority < _lowRankSssObject->currentPriority) {
-						_lowRankSssObject = so;
+						_lowPrioritySssObject = 0;
+					} else if (!_lowPrioritySssObject) {
+						_lowPrioritySssObject = findLowPrioritySoundObject();
+					} else if (so->currentPriority < _lowPrioritySssObject->currentPriority) {
+						_lowPrioritySssObject = so;
 					}
 				}
 			}
@@ -961,7 +942,7 @@ SssObject *Game::playSoundObject(SssInfo *s, int source, int mask) {
 			SssObject *so = &_sssObjectsTable[i];
 			if (so->pcm != 0 && so->filter == filter) {
 				so->currentPriority = CLIP(va + so->priority, 0, 7);
-				if (kLimitSounds) {
+				if (_playingSssObjectsMax > 0) {
 					setLowPrioritySoundObject(so);
 				}
 			}
@@ -1004,12 +985,13 @@ void Game::clearSoundObjects() {
 	memset(_sssObjectsTable, 0, sizeof(_sssObjectsTable));
 	_sssObjectsList1 = 0;
 	_sssObjectsList2 = 0;
-	_lowRankSssObject = 0;
+	_lowPrioritySssObject = 0;
 	for (int i = 0; i < kMaxSssObjects; ++i) {
 		_sssObjectsTable[i].num = i;
 	}
 	_sssObjectsCount = 0;
 	_playingSssObjectsCount = 0;
+	_snd_bufferOffset = _snd_bufferSize = 0;
 	_mix._mixingQueueSize = 0;
 	if (_res->_sssHdr.infosDataCount != 0) {
 		const int size = _res->_sssHdr.banksDataCount * sizeof(uint32_t);
@@ -1024,7 +1006,7 @@ void Game::clearSoundObjects() {
 
 void Game::setLowPrioritySoundObject(SssObject *so) {
 	if ((so->flags & kFlagPaused) == 0) {
-		_lowRankSssObject = findLowestRankSoundObject();
+		_lowPrioritySssObject = findLowPrioritySoundObject();
 	}
 }
 
@@ -1074,8 +1056,8 @@ void Game::setSoundObjectPanning(SssObject *so) {
 			}
 			if (so->currentPriority != priority) {
 				so->currentPriority = priority;
-				if (kLimitSounds) {
-					_lowRankSssObject = findLowestRankSoundObject();
+				if (_playingSssObjectsMax > 0) {
+					_lowPrioritySssObject = findLowPrioritySoundObject();
 				}
 			}
 		} else {

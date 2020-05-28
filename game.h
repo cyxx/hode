@@ -369,7 +369,7 @@ struct Game {
 	int clipAndyLvlObjectLar(BoundingBox *a, BoundingBox *b, bool flag);
 	void resetWormHoleSprites();
 	void updateWormHoleSprites();
-	bool loadSetupCfg(bool resume);
+	void loadSetupCfg(bool resume);
 	void saveSetupCfg();
 	void captureScreenshot();
 
@@ -502,6 +502,8 @@ struct Game {
 
 	// sound.cpp
 	bool _sssDisabled;
+	int16_t _snd_buffer[4096];
+	int _snd_bufferOffset, _snd_bufferSize;
 	bool _snd_muted;
 	int _snd_masterPanning;
 	int _snd_masterVolume;
@@ -510,7 +512,7 @@ struct Game {
 	int _sssObjectsCount;
 	SssObject *_sssObjectsList1; // playing
 	SssObject *_sssObjectsList2; // paused/idle
-	SssObject *_lowRankSssObject;
+	SssObject *_lowPrioritySssObject;
 	bool _sssUpdatedObjectsTable[kMaxSssObjects];
 	int _playingSssObjectsMax;
 	int _playingSssObjectsCount;
@@ -520,7 +522,7 @@ struct Game {
 	void resetSound();
 	int getSoundPosition(const SssObject *so);
 	void setSoundPanning(SssObject *so, int panning);
-	SssObject *findLowestRankSoundObject() const;
+	SssObject *findLowPrioritySoundObject() const;
 	void removeSoundObjectFromList(SssObject *so);
 	void updateSoundObject(SssObject *so);
 	void sssOp4_removeSounds(uint32_t flags);

@@ -692,7 +692,7 @@ void Level_lar1::preScreenUpdate_lar1_screen19() {
 void Level_lar1::preScreenUpdate_lar1_screen20() {
 	if (_res->_currentScreenResourceNum == 20) {
 		if (_checkpoint == 6) {
-			if ((_andyObject->flags0 & 0x1F) == 0xB) {
+			if ((_andyObject->flags0 & 0x1F) != 0xB) {
 				_checkpoint = 7;
 			}
 		}

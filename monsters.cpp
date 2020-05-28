@@ -1798,7 +1798,6 @@ void Game::mstMonster1MoveTowardsGoal2(MonsterObject1 *m) {
 		m->targetLevelPos_y = yPos;
 		p = _res->_mstMonsterInfos + m->m49Unk1->offsetMonsterInfo;
 		if (p[0xE] != 0) {
-			bboxIndex = m->monster1Index;
 			const int x1 = m->xMstPos + (int8_t)p[0xC];
 			const int y1 = m->yMstPos + (int8_t)p[0xD];
 			const int x2 = x1 + p[0xE] - 1;
@@ -2178,13 +2177,10 @@ bool Game::lvlObjectCollidesAndy3(LvlObject *o, int type) const {
 		if (y1 > y2) {
 			SWAP(y1, y2);
 		}
-		const int xPos = _andyObject->xPos + _andyObject->posTable[3].x;
-		const int yPos = _andyObject->yPos + _andyObject->posTable[3].y;
-		if (rect_contains(x1, y1, x2, y2, xPos, yPos)) {
-			return true;
-		}
 	}
-	return false;
+	const int xPos = _andyObject->xPos + _andyObject->posTable[3].x;
+	const int yPos = _andyObject->yPos + _andyObject->posTable[3].y;
+	return rect_contains(x1, y1, x2, y2, xPos, yPos);
 }
 
 bool Game::lvlObjectCollidesAndy4(LvlObject *o, int type) const {
@@ -2205,13 +2201,13 @@ bool Game::lvlObjectCollidesAndy4(LvlObject *o, int type) const {
 		if (y1 > y2) {
 			SWAP(y1, y2);
 		}
-		static const uint8_t indexes[] = { 1, 2, 4, 5 };
-		for (int i = 0; i < 4; ++i) {
-			const int xPos = _andyObject->xPos + _andyObject->posTable[indexes[i]].x;
-			const int yPos = _andyObject->yPos + _andyObject->posTable[indexes[i]].y;
-			if (rect_contains(x1, y1, x2, y2, xPos, yPos)) {
-				return true;
-			}
+	}
+	static const uint8_t indexes[] = { 1, 2, 4, 5 };
+	for (int i = 0; i < 4; ++i) {
+		const int xPos = _andyObject->xPos + _andyObject->posTable[indexes[i]].x;
+		const int yPos = _andyObject->yPos + _andyObject->posTable[indexes[i]].y;
+		if (rect_contains(x1, y1, x2, y2, xPos, yPos)) {
+			return true;
 		}
 	}
 	return false;
@@ -2474,7 +2470,7 @@ int Game::mstUpdateTaskMonsterObject1(Task *t) {
 				if (var28 == dirMask) {
 					continue;
 				}
-				if (mstMonster1CheckLevelBounds(m, _mstTemp_x1, _mstTemp_y1, dirMask)) {
+				if (mstMonster1CheckLevelBounds(m, _mstTemp_x1, _mstTemp_y1, ve)) {
 					continue;
 				}
 			}
@@ -3130,8 +3126,8 @@ int Game::mstTaskSetActionDirection(Task *t, int num, int delay) {
 		} else if ((o->directionKeyMask & kDirectionKeyMaskDown) == 0) {
 			va = 0;
 		}
-		const int x1 = m->xMstPos + (int8_t)p[0xC];
-		const int y1 = m->yMstPos + (int8_t)p[0xD];
+		const int x1 = m->xMstPos + (int8_t)p[0xC] + ve;
+		const int y1 = m->yMstPos + (int8_t)p[0xD] + va;
 		const int x2 = x1 + p[0xE] - 1;
 		const int y2 = y1 + p[0xF] - 1;
 		if ((var8 & 0xE0) != 0x60 && mstBoundingBoxCollides2(m->monster1Index, x1, y1, x2, y2) != 0) {
@@ -5917,7 +5913,6 @@ void Game::mstOp57_addWormHoleSprite(int x, int y, int screenNum) {
 		++spriteNum;
 	}
 	if (!found) {
-		found = true;
 		if (spriteNum == 6) {
 			++_wormHoleSpritesCount;
 			if (_wormHoleSpritesCount >= spriteNum) {

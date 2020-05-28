@@ -72,6 +72,7 @@ Game::Game(const char *dataPath, const char *savePath, uint32_t cheats)
 
 	_sssDisabled = false;
 	_snd_muted = false;
+	_snd_bufferOffset = _snd_bufferSize = 0;
 	_snd_masterPanning = kDefaultSoundPanning;
 	_snd_masterVolume = kDefaultSoundVolume;
 	_sssObjectsCount = 0;
@@ -1175,20 +1176,7 @@ void Game::removeLvlObject(LvlObject *ptr) {
 
 void Game::removeLvlObject2(LvlObject *o) {
 	if (o->type != 2) {
-		LvlObject *ptr = _lvlObjectsList1;
-		if (ptr) {
-			if (ptr == o) {
-				_lvlObjectsList1 = o->nextPtr;
-			} else {
-				LvlObject *prev = 0;
-				do {
-					prev = ptr;
-					ptr = ptr->nextPtr;
-				} while (ptr && ptr != o);
-				assert(ptr);
-				prev->nextPtr = ptr->nextPtr;
-			}
-		}
+		removeLvlObjectFromList(&_lvlObjectsList1, o);
 	}
 	o->dataPtr = 0;
 	if (o->type == 8) {
@@ -2074,6 +2062,10 @@ void Game::drawScreen() {
 	}
 }
 
+static void gamePafCallback(void *userdata) {
+	((Game *)userdata)->resetSound();
+}
+
 void Game::mainLoop(int level, int checkpoint, bool levelChanged) {
 	if (_playDemo && _res->loadHodDem()) {
 		_rnd._rndSeed = _res->_dem.randSeed;
@@ -2099,6 +2091,13 @@ void Game::mainLoop(int level, int checkpoint, bool levelChanged) {
 		// resume once, on the starting level
 		_resumeGame = false;
 	}
+
+	PafCallback pafCb;
+	pafCb.frameProc = 0;
+	pafCb.endProc = gamePafCallback;
+	pafCb.userdata = this;
+	_paf->setCallback(&pafCb);
+
 	_video->_font = _res->_fontBuffer;
 	assert(level < kLvl_test);
 	_currentLevel = level;
@@ -2171,18 +2170,14 @@ void Game::mixAudio(int16_t *buf, int len) {
 
 	static int count = 0;
 
-	static int16_t buffer[4096];
-	static int bufferOffset = 0;
-	static int bufferSize = 0;
-
 	// flush samples from previous run
-	if (bufferSize > 0) {
-		const int count = len < bufferSize ? len : bufferSize;
-		memcpy(buf, buffer + bufferOffset, count * sizeof(int16_t));
+	if (_snd_bufferSize > 0) {
+		const int count = len < _snd_bufferSize ? len : _snd_bufferSize;
+		memcpy(buf, _snd_buffer + _snd_bufferOffset, count * sizeof(int16_t));
 		buf += count;
 		len -= count;
-		bufferOffset += count;
-		bufferSize -= count;
+		_snd_bufferOffset += count;
+		_snd_bufferSize -= count;
 	}
 
 	while (len > 0) {
@@ -2202,11 +2197,11 @@ void Game::mixAudio(int16_t *buf, int len) {
 			buf += kStereoSamples;
 			len -= kStereoSamples;
 		} else {
-			memset(buffer, 0, sizeof(buffer));
-			_mix.mix(buffer, kStereoSamples);
-			memcpy(buf, buffer, len * sizeof(int16_t));
-			bufferOffset = len;
-			bufferSize = kStereoSamples - len;
+			memset(_snd_buffer, 0, sizeof(_snd_buffer));
+			_mix.mix(_snd_buffer, kStereoSamples);
+			memcpy(buf, _snd_buffer, len * sizeof(int16_t));
+			_snd_bufferOffset = len;
+			_snd_bufferSize = kStereoSamples - len;
 			break;
 		}
 	}
@@ -2914,8 +2909,11 @@ void Game::removeLvlObjectFromList(LvlObject **list, LvlObject *ptr) {
 			do {
 				prev = current;
 				current = current->nextPtr;
-			} while (current && current != ptr);
-			assert(prev);
+				if (!current) {
+					warning("LvlObject %p not found for removal", ptr);
+					return;
+				}
+			} while (current != ptr);
 			prev->nextPtr = current->nextPtr;
 		}
 	}
@@ -3689,20 +3687,7 @@ int Game::lvlObjectType8Callback(LvlObject *ptr) {
 int Game::lvlObjectList3Callback(LvlObject *o) {
 	const uint8_t flags = o->flags0 & 0xFF;
 	if ((o->spriteNum <= 7 && (flags & 0x1F) == 0xB) || (o->spriteNum > 7 && flags == 0x1F)) {
-		if (_lvlObjectsList3 && o) {
-			if (o != _lvlObjectsList3) {
-				LvlObject *prev = 0;
-				LvlObject *ptr = _lvlObjectsList3;
-				do {
-					prev = ptr;
-					ptr = ptr->nextPtr;
-				} while (ptr && ptr != o);
-				assert(ptr);
-				prev->nextPtr = ptr->nextPtr;
-			} else {
-				_lvlObjectsList3 = o->nextPtr;
-			}
-		}
+		removeLvlObjectFromList(&_lvlObjectsList3, o);
 		if (o->type == 8) {
 			_res->decLvlSpriteDataRefCounter(o);
 			o->nextPtr = _declaredLvlObjectsNextPtr;
@@ -4799,14 +4784,12 @@ void Game::updateWormHoleSprites() {
 	_res->decLvlSpriteDataRefCounter(&tmp);
 }
 
-bool Game::loadSetupCfg(bool resume) {
+void Game::loadSetupCfg(bool resume) {
 	_resumeGame = resume;
-	if (_res->readSetupCfg(&_setupConfig)) {
-		return true;
+	if (!_res->readSetupCfg(&_setupConfig)) {
+		memset(&_setupConfig, 0, sizeof(_setupConfig));
+		_res->setDefaultsSetupCfg(&_setupConfig, 0);
 	}
-	memset(&_setupConfig, 0, sizeof(_setupConfig));
-	_res->setDefaultsSetupCfg(&_setupConfig, 0);
-	return false;
 }
 
 void Game::saveSetupCfg() {
