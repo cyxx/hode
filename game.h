@@ -42,7 +42,9 @@ enum {
 	kCheatOneHitPlasmaCannon = 1 << 1,
 	kCheatOneHitSpecialPowers = 1 << 2,
 	kCheatWalkOnLava = 1 << 3,
-	kCheatGateNoCrush = 1 << 4
+	kCheatGateNoCrush = 1 << 4,
+	kCheatLavaNoHit = 1 << 5,
+	kCheatRockShadowNoHit = 1 << 6
 };
 
 struct Game {
@@ -175,7 +177,6 @@ struct Game {
 	Task *_currentTask;
 	int _mstOp54Counter;
 	int _mstOp56Counter;
-	uint8_t _mstOp54Table[32];
 	bool _mstDisabled;
 	LvlObject _declaredLvlObjectsList[kMaxLvlObjects];
 	LvlObject *_declaredLvlObjectsNextPtr; // pointer to the next free entry
@@ -218,7 +219,7 @@ struct Game {
 	int _mstBoundingBoxesCount;
 	MstBoundingBox _mstBoundingBoxesTable[kMaxBoundingBoxes];
 	Task *_mstCurrentTask;
-	MstCollision _mstCollisionTable[2][32]; // 0:facingRight, 1:facingLeft
+	MstCollision _mstCollisionTable[2][kMaxMonsterObjects1]; // 0:facingRight, 1:facingLeft
 	int _wormHoleSpritesCount;
 	WormHoleSprite _wormHoleSpritesTable[6];
 
@@ -237,7 +238,6 @@ struct Game {
 	}
 
 	// benchmark.cpp
-	uint32_t benchmarkLoop(const uint8_t *p, int count);
 	uint32_t benchmarkCpu();
 
 	// game.cpp
@@ -245,6 +245,7 @@ struct Game {
 	void mixAudio(int16_t *buf, int len);
 	void resetShootLvlObjectDataTable();
 	void clearShootLvlObjectData(LvlObject *ptr);
+	void addShootLvlObject(LvlObject *_edx, LvlObject *ptr);
 	void setShakeScreen(int type, int counter);
 	void fadeScreenPalette();
 	void shakeScreen();
@@ -312,7 +313,6 @@ struct Game {
 	LvlObject *updateAnimatedLvlObjectType0(LvlObject *ptr);
 	LvlObject *updateAnimatedLvlObjectType1(LvlObject *ptr);
 	LvlObject *updateAnimatedLvlObjectType2(LvlObject *ptr);
-	LvlObject *updateAnimatedLvlObjectTypeDefault(LvlObject *ptr);
 	LvlObject *updateAnimatedLvlObject(LvlObject *o);
 	void updateAnimatedLvlObjectsLeftRightCurrentScreens();
 	void updatePlasmaCannonExplosionLvlObject(LvlObject *ptr);
@@ -328,7 +328,6 @@ struct Game {
 	void callLevel_terminate();
 	void displayLoadingScreen();
 	int displayHintScreen(int num, int pause);
-	void prependLvlObjectToList(LvlObject **list, LvlObject *ptr);
 	void removeLvlObjectFromList(LvlObject **list, LvlObject *ptr);
 	void *getLvlObjectDataPtr(LvlObject *o, int type) const;
 	void lvlObjectType0Init(LvlObject *ptr);

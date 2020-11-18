@@ -448,10 +448,10 @@ void Video::drawStringCharacter(int x, int y, uint8_t chr, uint8_t color, uint8_
 void Video::drawString(const char *s, int x, int y, uint8_t color, uint8_t *dst) {
 	for (int i = 0; s[i]; ++i) {
 		uint8_t chr = s[i];
-		if (chr >= 'a' && chr <= 'z') {
-			chr += 'A' - 'a';
-		}
 		if (chr != ' ') {
+			if (chr >= 'a' && chr <= 'z') {
+				chr += 'A' - 'a';
+			}
 			chr = findStringCharacterFontIndex(chr);
 			if (chr == 255) {
 				continue;

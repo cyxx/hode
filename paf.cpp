@@ -384,7 +384,8 @@ void PafPlayer::decodeVideoFrameOp4(const uint8_t *src) {
 static void decodeAudioFrame2205(const uint8_t *src, int len, int16_t *dst, int volume) {
 	static const int offset = 256 * sizeof(int16_t);
 	for (int i = 0; i < len * 2; ++i) { // stereo
-		dst[i] = (((int16_t)READ_LE_UINT16(src + src[offset + i] * sizeof(int16_t))) * volume) >> 7;
+		const int16_t sample = READ_LE_UINT16(src + src[offset + i] * sizeof(int16_t));
+		dst[i] = CLIP((sample * volume + 64) >> 7, -32768, 32767);
 	}
 }
 
@@ -453,7 +454,7 @@ void PafPlayer::mix(int16_t *buf, int samples) {
 		_audioQueueTail = 0;
 	}
 	if (samples > 0) {
-		warning("PafPlayer::mix() soundQueue underrun %d", samples);
+		debug(kDebug_PAF, "audioQueue underrun %d", samples);
 	}
 }
 

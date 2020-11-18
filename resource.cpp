@@ -1587,8 +1587,8 @@ void Resource::loadMstData(File *fp) {
 	_mstMonsterActionData.allocate(_mstHdr.monsterActionDataCount);
 	for (int i = 0; i < _mstHdr.monsterActionDataCount; ++i) {
 		MstMonsterAction *m = &_mstMonsterActionData[i];
-		m->unk0 = fp->readUint16();
-		m->unk2 = fp->readUint16();
+		m->xRange = fp->readUint16();
+		m->yRange = fp->readUint16();
 		m->unk4 = fp->readByte();
 		m->direction = fp->readByte();
 		m->unk6 = fp->readByte();
@@ -1636,7 +1636,7 @@ void Resource::loadMstData(File *fp) {
 			for (uint32_t k = 0; k < m12[j].count; ++k) {
 				uint8_t data[28];
 				fp->read(data, sizeof(data));
-				m12[j].data[k].unk0 = READ_LE_UINT32(data);
+				m12[j].data[k].indexMonsterInfo = READ_LE_UINT32(data);
 				m12[j].data[k].indexUnk51 = READ_LE_UINT32(data + 0x4);
 				m12[j].data[k].xPos = READ_LE_UINT32(data + 0x8);
 				m12[j].data[k].yPos = READ_LE_UINT32(data + 0xC);
@@ -1687,7 +1687,7 @@ void Resource::loadMstData(File *fp) {
 			_mstMovingBoundsData[i].data1[j].unkF = fp->readByte();
 			const uint32_t num = _mstMovingBoundsData[i].data1[j].unk4;
 			assert(num < 32);
-			_mstMovingBoundsData[i].data1[j].offsetMonsterInfo = start * kMonsterInfoDataSize + num * 28;
+			_mstMovingBoundsData[i].data1[j].offsetMonsterInfo = start * kMonsterInfoDataSize + num * kMonsterInfoSize;
 			bytesRead += 16;
 		}
 		if (_mstMovingBoundsData[i].indexDataCount != 0) {
@@ -1710,7 +1710,7 @@ void Resource::loadMstData(File *fp) {
 		for (uint32_t j = 0; j < _mstShootData[i].count; ++j) {
 			_mstShootData[i].data[j].codeData = fp->readUint32();
 			_mstShootData[i].data[j].unk4 = fp->readUint32();
-			_mstShootData[i].data[j].unk8 = fp->readUint32();
+			_mstShootData[i].data[j].dirMask = fp->readUint32();
 			_mstShootData[i].data[j].xPos = fp->readUint32();
 			_mstShootData[i].data[j].yPos = fp->readUint32();
 			_mstShootData[i].data[j].width = fp->readUint32();

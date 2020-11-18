@@ -1,5 +1,9 @@
+* release 0.2.9d
+	- added gain to sounds
+	- added no-hit cheat for 'rock' and 'lava'
+
 * release 0.2.9c
-	- added original sound limiter (16 channels)
+	- added original sounds limiter (16 channels)
 	- fixed checkpoint 7 for 'lar1' screen 19
 	- fixed some bounding box checks
 	- fixed sound glitches when resuming the game after a cutscene
