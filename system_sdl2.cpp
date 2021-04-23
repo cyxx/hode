@@ -14,14 +14,23 @@ static const char *kIconBmp = "icon.bmp";
 
 static int _scalerMultiplier = 3;
 static const Scaler *_scaler = &scaler_xbr;
+static ScaleProc _scalerProc;
 
-static const struct {
-	const char *name;
-	const Scaler *scaler;
-} _scalers[] = {
-	{ "nearest", &scaler_nearest },
-	{ "xbr", &scaler_xbr },
-	{ 0, 0 }
+const Scaler scaler_linear = {
+	"linear",
+	2, 4
+};
+
+const Scaler scaler_nearest = {
+	"nearest",
+	2, 4
+};
+
+static const Scaler *_scalers[] = {
+	&scaler_linear,
+	&scaler_nearest,
+	&scaler_xbr,
+	0
 };
 
 struct KeyMapping {
@@ -41,7 +50,7 @@ struct System_SDL2 : System {
 	SDL_Renderer *_renderer;
 	SDL_Texture *_texture;
 	SDL_Texture *_backgroundTexture; // YUV (PSX)
-	int _texW, _texH;
+	int _texW, _texH, _texScale;
 	SDL_PixelFormat *_fmt;
 	uint32_t _pal[256];
 	int _screenW, _screenH;
@@ -297,20 +306,21 @@ void System_SDL2::copyRectWidescreen(int w, int h, const uint8_t *buf, const uin
 }
 
 void System_SDL2::setScaler(const char *name, int multiplier) {
-	if (multiplier != 0) {
+	if (multiplier > 0) {
 		_scalerMultiplier = multiplier;
 	}
 	if (name) {
-		for (int i = 0; _scalers[i].name; ++i) {
-			if (strcmp(name, _scalers[i].name) == 0) {
-				_scaler = _scalers[i].scaler;
+		const Scaler *scaler = 0;
+		for (int i = 0; _scalers[i]; ++i) {
+			if (strcmp(name, _scalers[i]->name) == 0) {
+				scaler = _scalers[i];
 				break;
 			}
 		}
-		if (_scalerMultiplier < _scaler->factorMin) {
-			_scalerMultiplier = _scaler->factorMin;
-		} else if (_scalerMultiplier > _scaler->factorMax) {
-			_scalerMultiplier = _scaler->factorMax;
+		if (!scaler) {
+			warning("Unknown scaler '%s', using default '%s'", name, _scaler->name);
+		} else {
+			_scaler = scaler;
 		}
 	}
 }
@@ -342,7 +352,7 @@ void System_SDL2::setPalette(const uint8_t *pal, int n, int depth) {
 	if (_backgroundTexture) {
 		_pal[0] = 0;
 	}
-	if (_scalerMultiplier != 1 && _scaler->palette) {
+	if (_scaler->palette) {
 		_scaler->palette(_pal);
 	}
 }
@@ -392,10 +402,10 @@ void System_SDL2::shakeScreen(int dx, int dy) {
 	_shakeDy = dy;
 }
 
-static void clearScreen(uint32_t *dst, int dstPitch, int x, int y, int w, int h) {
-	uint32_t *p = dst + (y * dstPitch + x) * _scalerMultiplier;
-	for (int j = 0; j < h * _scalerMultiplier; ++j) {
-		memset(p, 0, w * sizeof(uint32_t) * _scalerMultiplier);
+static void clearScreen(uint32_t *dst, int dstPitch, int x, int y, int w, int h, int scale) {
+	uint32_t *p = dst + (y * dstPitch + x) * scale;
+	for (int j = 0; j < h * scale; ++j) {
+		memset(p, 0, w * sizeof(uint32_t) * scale);
 		p += dstPitch;
 	}
 }
@@ -415,30 +425,30 @@ void System_SDL2::updateScreen(bool drawWidescreen) {
 	const int srcPitch = _screenW;
 	if (!_widescreenTexture) {
 		if (_shakeDy > 0) {
-			clearScreen(dst, dstPitch, 0, 0, w, _shakeDy);
+			clearScreen(dst, dstPitch, 0, 0, w, _shakeDy, _texScale);
 			h -= _shakeDy;
 			dst += _shakeDy * dstPitch;
 		} else if (_shakeDy < 0) {
 			h += _shakeDy;
-			clearScreen(dst, dstPitch, 0, h, w, -_shakeDy);
+			clearScreen(dst, dstPitch, 0, h, w, -_shakeDy, _texScale);
 			src -= _shakeDy * srcPitch;
 		}
 		if (_shakeDx > 0) {
-			clearScreen(dst, dstPitch, 0, 0, _shakeDx, h);
+			clearScreen(dst, dstPitch, 0, 0, _shakeDx, h, _texScale);
 			w -= _shakeDx;
 			dst += _shakeDx;
 		} else if (_shakeDx < 0) {
 			w += _shakeDx;
-			clearScreen(dst, dstPitch, w, 0, -_shakeDx, h);
+			clearScreen(dst, dstPitch, w, 0, -_shakeDx, h, _texScale);
 			src -= _shakeDx;
 		}
 	}
-	if (_scalerMultiplier == 1) {
+	if (!_scalerProc) {
 		for (int i = 0; i < w * h; ++i) {
 			dst[i] = _pal[src[i]];
 		}
 	} else {
-		(_scaler->scale[_scalerMultiplier - 2])(dst, dstPitch, src, w, w, h, _pal);
+		_scalerProc(dst, dstPitch, src, srcPitch, w, h, _pal);
 	}
 	SDL_UnlockTexture(_texture);
 
@@ -452,10 +462,12 @@ void System_SDL2::updateScreen(bool drawWidescreen) {
 		r.x = _shakeDx * _scalerMultiplier;
 		r.y = _shakeDy * _scalerMultiplier;
 		SDL_RenderGetLogicalSize(_renderer, &r.w, &r.h);
-		r.x += (r.w - _texW) / 2;
-		r.w = _texW;
-		r.y += (r.h - _texH) / 2;
-		r.h = _texH;
+		const int w = _screenW * _scalerMultiplier;
+		const int h = _screenH * _scalerMultiplier;
+		r.x += (r.w - w) / 2;
+		r.w = w;
+		r.y += (r.h - h) / 2;
+		r.h = h;
 		if (_backgroundTexture) {
 			SDL_RenderCopy(_renderer, _backgroundTexture, 0, &r);
 		}
@@ -800,10 +812,27 @@ void System_SDL2::updateKeys(PlayerInput *inp) {
 }
 
 void System_SDL2::prepareScaledGfx(const char *caption, bool fullscreen, bool widescreen, bool yuv) {
-	_texW = _screenW * _scalerMultiplier;
-	_texH = _screenH * _scalerMultiplier;
-	const int windowW = widescreen ? _texH * 16 / 9 : _texW;
-	const int windowH = _texH;
+	const int w = _screenW * _scalerMultiplier;
+	const int h = _screenH * _scalerMultiplier;
+	if (_scalerMultiplier > 1) {
+		if (_scalerMultiplier < _scaler->factorMin) {
+			_scalerMultiplier = _scaler->factorMin;
+		} else if (_scalerMultiplier > _scaler->factorMax) {
+			_scalerMultiplier = _scaler->factorMax;
+		}
+		_scalerProc = _scaler->scale[_scalerMultiplier - 2];
+	}
+	if (_scalerProc) {
+		_texW = w;
+		_texH = h;
+		_texScale = _scalerMultiplier;
+	} else {
+		_texW = _screenW;
+		_texH = _screenH;
+		_texScale = 1;
+	}
+	const int windowW = widescreen ? h * 16 / 9 : w;
+	const int windowH = h;
 	const int flags = fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : SDL_WINDOW_RESIZABLE;
 	_window = SDL_CreateWindow(caption, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, windowW, windowH, flags);
 	SDL_Surface *icon = SDL_LoadBMP(kIconBmp);
